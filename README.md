@@ -1,56 +1,56 @@
-# Overcooked-Agent
+# Overcooked2-RL
 
-用强化学习在 **Overcooked! 2** 中训练双 agent 刷分。
+Train two agents to rack up scores in **Overcooked! 2** using reinforcement learning.
 
-## 路线
+## Roadmap
 
 ```
-阶段1: Overcooked-AI 模拟器 ──► 阶段2: FCP 种群训练 ──► 阶段3: 真机迁移
-        PPO self-play 基线        跨队友泛化              视觉策略 sim-to-real
+Phase 1: Overcooked-AI simulator ──► Phase 2: FCP population training ──► Phase 3: Real-game transfer
+        PPO self-play baseline        Cross-partner generalization       Visual policy sim-to-real
 ```
 
-## 环境
+## Environment
 
 ```bash
 conda activate overcooked   # python 3.10, torch 2.6+cu124
 ```
 
-## 阶段 1：模拟器基线（src/sim/）
+## Phase 1: Simulator Baseline (src/sim/)
 
 ```bash
 cd src/sim
 python train_sp.py --layout cramped_room --timesteps 5000000 --n-envs 32
 ```
 
-- `gym_env.py` — Gymnasium 封装（96 维 featurized 观测，~5k steps/s/核）
-- `train_sp.py` — PPO self-play（partner 定期同步为当前策略快照）
+- `gym_env.py` — Gymnasium wrapper (96-dim featurized observations, ~5k steps/s/core)
+- `train_sp.py` — PPO self-play (partner is periodically synced to a snapshot of the current policy)
 
-## 阶段 2：种群训练（FCP）
+## Phase 2: Population Training (FCP)
 
 ```bash
-# 1) 生成种群：多个 seed 的自对弈 agent + random
+# 1) Build the population: self-play agents from multiple seeds + a random agent
 python seed_population.py --layout cramped_room --n-seeds 4 --timesteps 3000000
 
-# 2) FCP 训练：主角 vs 种群中采样的队友
+# 2) FCP training: the protagonist trains against teammates sampled from the population
 python train_fcp.py --layout cramped_room --timesteps 5000000
 
-# 3) 评估：self-play 分数 / cross-play 矩阵
+# 3) Evaluation: self-play score / cross-play matrix
 python evaluate.py --layout cramped_room --model checkpoints/sim_sp/xxx.zip
 python evaluate.py --layout cramped_room --population population/cramped_room --episodes 20
 ```
 
-核心指标：**cross-play（与陌生队友配对）得分 / self-play 得分 ≥ 80%**。
+Key metric: **cross-play (paired with unseen teammates) score / self-play score ≥ 80%**.
 
-- `population.py` — 种群管理（checkpoint 注册、采样、ELO）
-- `train_fcp.py` — FCP 训练器
-- `evaluate.py` — self-play / cross-play 评估
+- `population.py` — Population management (checkpoint registry, sampling, ELO)
+- `train_fcp.py` — FCP trainer
+- `evaluate.py` — Self-play / cross-play evaluation
 
-## 阶段 3：真机（原有代码，待接入）
+## Phase 3: Real Game (existing code, to be integrated)
 
-- `src/screen_io.py`、`src/env.py` — 截屏 + 键盘控制真机环境
-- `src/train.py`、`src/play.py` — 真机 PPO / 推理
+- `src/screen_io.py`, `src/env.py` — Real-game environment via screen capture + keyboard control
+- `src/train.py`, `src/play.py` — Real-game PPO / inference
 
-## 监控
+## Monitoring
 
 ```bash
 tail -f logs/cramped_room_sp.log
