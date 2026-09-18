@@ -1,0 +1,30 @@
+﻿{
+  "screen": {
+    "monitor": 1,
+    "capture_size": [1280, 720],
+    "resize_to": [320, 180]
+  },
+  "control": {
+    "keys": {
+      "up": "w",
+      "down": "s",
+      "left": "a",
+      "right": "d",
+      "interact": "e",
+      "chop_throw": "q"
+    },
+    "action_repeat_ms": 100
+  },
+  "agent": {
+    "frame_stack": 4,
+    "step_delay_s": 0.1,
+    "max_episode_steps": 4000
+  },
+  "train": {
+    "algo": "ppo",
+    "total_timesteps": 2000000,
+    "n_envs": 4,
+    "checkpoint_every_steps": 100000,
+    "save_dir": "checkpoints"
+  }
+}

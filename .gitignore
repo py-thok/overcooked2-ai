@@ -1,0 +1,17 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# 训练产物
+checkpoints/*
+!checkpoints/.gitkeep
+logs/*
+!logs/.gitkeep
+src/sim/checkpoints/
+src/sim/logs/
+*.tfevents.*
+
+# 环境
+.venv/
+*.egg-info/

@@ -1,0 +1,9 @@
+﻿python>=3.10
+torch>=2.0
+gymnasium
+stable-baselines3[extra]
+mss
+pynput
+opencv-python
+numpy
+pyyaml
