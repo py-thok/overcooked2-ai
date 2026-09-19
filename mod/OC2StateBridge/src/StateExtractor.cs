@@ -27,6 +27,8 @@ namespace OC2StateBridge
         private static float _nextPlayerScan;
         private static GridManager _grid;
         private static float _nextGridScan;
+        private static ServerCookingHandler[] _cookers = new ServerCookingHandler[0];
+        private static float _nextCookerScan;
         private static int _seq;
 
         public static string Collect()
@@ -173,9 +175,18 @@ namespace OC2StateBridge
 
         private static void WriteCookers(JsonWriter w)
         {
+            // The static registry ServerCookingHandler.GetCookingHandlers()
+            // proved unreliable in s_sushi_1_4 (empty despite live pots), so
+            // scan the scene directly and cache.
+            if (Time.time >= _nextCookerScan)
+            {
+                _nextCookerScan = Time.time + 2f;
+                try { _cookers = UnityEngine.Object.FindObjectsOfType<ServerCookingHandler>(); }
+                catch { _cookers = new ServerCookingHandler[0]; }
+            }
             w.Key("cookers");
             w.BeginArray();
-            foreach (ServerCookingHandler h in ServerCookingHandler.GetCookingHandlers())
+            foreach (ServerCookingHandler h in _cookers)
             {
                 if (h == null) continue;
                 w.BeginObject();

@@ -16,6 +16,13 @@ namespace OC2StateBridge
     {
         private class Slot
         {
+            // Preferred path: drive the game's own network input wrappers
+            public NetworkLogicalValue NetMoveX;
+            public NetworkLogicalValue NetMoveY;
+            public NetworkLogicalButton NetPickup;
+            public NetworkLogicalButton NetUse;
+            public NetworkLogicalButton NetDash;
+            // Fallback path: plugin-owned replacements
             public PluginLogicalValue MoveX = new PluginLogicalValue();
             public PluginLogicalValue MoveY = new PluginLogicalValue();
             public PluginLogicalButton Pickup = new PluginLogicalButton();
@@ -52,14 +59,25 @@ namespace OC2StateBridge
                 Slot slot = _slots[i];
                 if (ReferenceEquals(slot.HookedScheme, scheme)) continue;
 
-                scheme.m_moveX = slot.MoveX;
-                scheme.m_moveY = slot.MoveY;
-                scheme.m_pickupButton = slot.Pickup;
-                scheme.m_worksurfaceUseButton = slot.Use;
-                scheme.m_dashButton = slot.Dash;
+                // The server wraps input slots with NetworkLogical* (see
+                // ServerInputReceiver). Driving those keeps the game's input
+                // pipeline intact; only replace slots when wrappers are absent.
+                slot.NetMoveX = scheme.m_moveX as NetworkLogicalValue;
+                slot.NetMoveY = scheme.m_moveY as NetworkLogicalValue;
+                slot.NetPickup = scheme.m_pickupButton as NetworkLogicalButton;
+                slot.NetUse = scheme.m_worksurfaceUseButton as NetworkLogicalButton;
+                slot.NetDash = scheme.m_dashButton as NetworkLogicalButton;
+
+                if (slot.NetMoveX == null) scheme.m_moveX = slot.MoveX;
+                if (slot.NetMoveY == null) scheme.m_moveY = slot.MoveY;
+                if (slot.NetPickup == null) scheme.m_pickupButton = slot.Pickup;
+                if (slot.NetUse == null) scheme.m_worksurfaceUseButton = slot.Use;
+                if (slot.NetDash == null) scheme.m_dashButton = slot.Dash;
+
                 slot.HookedScheme = scheme;
                 if (log != null)
-                    log.LogInfo("[OC2Bridge] input hooked for player slot " + i + " (" + players[i].name + ")");
+                    log.LogInfo("[OC2Bridge] input hooked for player slot " + i + " (" + players[i].name +
+                        ") network-wrappers=" + (slot.NetMoveX != null));
             }
         }
 
@@ -82,13 +100,23 @@ namespace OC2StateBridge
                 List<object> mv = d["move"] as List<object>;
                 if (mv != null && mv.Count >= 2)
                 {
-                    slot.MoveX.Value = Convert.ToSingle(mv[0]);
-                    slot.MoveY.Value = Convert.ToSingle(mv[1]);
+                    float x = Convert.ToSingle(mv[0]);
+                    float y = Convert.ToSingle(mv[1]);
+                    if (slot.NetMoveX != null) slot.NetMoveX.SetValue(x); else slot.MoveX.Value = x;
+                    if (slot.NetMoveY != null) slot.NetMoveY.SetValue(y); else slot.MoveY.Value = y;
                 }
             }
-            if (d.ContainsKey("pickup")) slot.Pickup.SetDown(Convert.ToBoolean(d["pickup"]));
-            if (d.ContainsKey("use")) slot.Use.SetDown(Convert.ToBoolean(d["use"]));
-            if (d.ContainsKey("dash")) slot.Dash.SetDown(Convert.ToBoolean(d["dash"]));
+            if (d.ContainsKey("pickup")) SetButton(slot, 0, Convert.ToBoolean(d["pickup"]));
+            if (d.ContainsKey("use")) SetButton(slot, 1, Convert.ToBoolean(d["use"]));
+            if (d.ContainsKey("dash")) SetButton(slot, 2, Convert.ToBoolean(d["dash"]));
+        }
+
+        private static void SetButton(Slot slot, int which, bool down)
+        {
+            NetworkLogicalButton net = which == 0 ? slot.NetPickup : which == 1 ? slot.NetUse : slot.NetDash;
+            PluginLogicalButton own = which == 0 ? slot.Pickup : which == 1 ? slot.Use : slot.Dash;
+            if (net != null) net.SetIsDown(down);
+            else own.SetDown(down);
         }
     }
 

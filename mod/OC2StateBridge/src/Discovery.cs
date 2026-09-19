@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Text;
 using BepInEx.Logging;
@@ -73,7 +74,7 @@ namespace OC2StateBridge
                     if (c != null) sb.AppendLine("    cmp: " + c.GetType().Name);
             }
 
-            // Cooking handlers
+            // Cooking handlers (registry)
             int n = 0;
             foreach (ServerCookingHandler h in ServerCookingHandler.GetCookingHandlers())
             {
@@ -87,9 +88,59 @@ namespace OC2StateBridge
             }
             if (n == 0) sb.AppendLine("cookers: none found");
 
+            // Cooking-related component census (finds pots even if the registry missed them)
+            DumpComponents<CookingHandler>(sb, "CookingHandler");
+            DumpComponents<MixingHandler>(sb, "MixingHandler");
+            DumpComponents<CookingStation>(sb, "CookingStation");
+            DumpComponents<HeatedStation>(sb, "HeatedStation");
+            DumpComponents<ClientAttachStation>(sb, "ClientAttachStation");
+
+            // Heated station registry
+            try
+            {
+                List<ServerHeatedStation> heated = ServerHeatedStation.GetAllHeatedStations();
+                sb.AppendLine("ServerHeatedStation registry: " + heated.Count);
+                foreach (ServerHeatedStation hs in heated)
+                    if (hs != null)
+                        sb.AppendLine("  heated: " + hs.gameObject.name + " pos=" + hs.transform.position);
+            }
+            catch (Exception e) { sb.AppendLine("heated registry error: " + e.Message); }
+
+            // Control scheme slot types (input injection validation)
+            foreach (GameObject p in GameObject.FindGameObjectsWithTag("Player"))
+            {
+                PlayerControls pc = p.GetComponent<PlayerControls>();
+                if (pc == null || pc.ControlScheme == null) continue;
+                PlayerControls.ControlSchemeData cs = pc.ControlScheme;
+                sb.AppendLine("scheme " + p.name + ": moveX=" + TypeName(cs.m_moveX) +
+                    " moveY=" + TypeName(cs.m_moveY) +
+                    " pickup=" + TypeName(cs.m_pickupButton) +
+                    " use=" + TypeName(cs.m_worksurfaceUseButton) +
+                    " dash=" + TypeName(cs.m_dashButton));
+            }
+
             string path = Path.Combine(Directory.GetCurrentDirectory(), "oc2bridge_discovery.log");
             File.WriteAllText(path, sb.ToString());
             if (log != null) log.LogInfo("[OC2Bridge] discovery written to " + path);
+        }
+
+        private static string TypeName(object o)
+        {
+            return o == null ? "null" : o.GetType().Name;
+        }
+
+        private static void DumpComponents<T>(StringBuilder sb, string label) where T : Component
+        {
+            T[] found = UnityEngine.Object.FindObjectsOfType<T>();
+            sb.AppendLine(label + " objects: " + found.Length);
+            foreach (T c in found)
+            {
+                if (c == null) continue;
+                sb.AppendLine("  " + c.gameObject.name + " pos=" + c.transform.position);
+                foreach (Component cc in c.gameObject.GetComponents<Component>())
+                    if (cc != null && !(cc is T))
+                        sb.AppendLine("    cmp: " + cc.GetType().Name);
+            }
         }
 
         private static string DescribeGo(GameObject go)
