@@ -199,6 +199,9 @@ namespace OC2StateBridge
     /// <summary>Plugin-owned digital button with edge events.</summary>
     public class PluginLogicalButton : ILogicalButton
     {
+        // debug counters: are we in the game's read path at all?
+        public static int s_justPressedCalls, s_justPressedTrue, s_isDownCalls, s_isDownTrue;
+
         private bool _down;
         private bool _justPressed;
         private bool _justReleased;
@@ -212,10 +215,12 @@ namespace OC2StateBridge
             else { _justReleased = true; }
         }
 
-        public bool IsDown() { return _down; }
+        public bool IsDown() { s_isDownCalls++; if (_down) s_isDownTrue++; return _down; }
 
         public bool JustPressed()
         {
+            s_justPressedCalls++;
+            if (_justPressed) s_justPressedTrue++;
             bool v = _justPressed;
             _justPressed = false;
             return v;

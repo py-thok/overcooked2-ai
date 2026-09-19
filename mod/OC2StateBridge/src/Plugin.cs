@@ -20,6 +20,7 @@ namespace OC2StateBridge
     public class Plugin : BaseUnityPlugin
     {
         private StateServer _server;
+        private float _nextDebugLog;
 
         private void Awake()
         {
@@ -43,6 +44,14 @@ namespace OC2StateBridge
             {
                 Discovery.Dump(Logger);
             }
+
+            if (Time.time >= _nextDebugLog)
+            {
+                _nextDebugLog = Time.time + 2f;
+                Logger.LogInfo("[OC2Bridge] btn reads: JustPressed true/calls=" +
+                    PluginLogicalButton.s_justPressedTrue + "/" + PluginLogicalButton.s_justPressedCalls +
+                    " IsDown true/calls=" + PluginLogicalButton.s_isDownTrue + "/" + PluginLogicalButton.s_isDownCalls);
+            }
         }
 
         /// <summary>Main-thread dispatch of queued client commands.</summary>
@@ -51,6 +60,10 @@ namespace OC2StateBridge
             if (cmd == "@RESET")
             {
                 EnvControl.RestartLevel(Logger);
+            }
+            else if (cmd == "@ENGAGE")
+            {
+                EnvControl.Engage(Logger);
             }
             else if (cmd.StartsWith("@TIMESCALE "))
             {
@@ -67,6 +80,16 @@ namespace OC2StateBridge
             else if (cmd.StartsWith("@MODE "))
             {
                 InputInjector.SetMode(cmd.Substring(6).Trim() == "drive", Logger);
+            }
+            else if (cmd.StartsWith("@INTERACT "))
+            {
+                int p = int.Parse(cmd.Substring(10).Trim());
+                Logger.LogInfo("[OC2Bridge] interact: " + SemanticActions.Interact(p, Logger));
+            }
+            else if (cmd.StartsWith("@THROW "))
+            {
+                int p = int.Parse(cmd.Substring(7).Trim());
+                Logger.LogInfo("[OC2Bridge] throw: " + SemanticActions.ThrowItem(p, Logger));
             }
             else if (cmd.StartsWith("@SETPOS "))
             {

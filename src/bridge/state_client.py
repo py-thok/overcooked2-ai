@@ -75,6 +75,11 @@ class StateBridgeClient:
         """Restart the current level via the game's own flow."""
         return self._cmd("RESET") == "OK"
 
+    def engage(self):
+        """Pass the StartScreen 'press any key' prompt programmatically
+        (engages the keyboard pad and loads the profile)."""
+        return self._cmd("ENGAGE") == "OK"
+
     def load_level(self, scene_name):
         """Load a kitchen level by scene name, from anywhere."""
         return self._cmd(f"LOADLEVEL {scene_name}") == "OK"
@@ -88,6 +93,15 @@ class StateBridgeClient:
         inputs are echoed in state for demonstration recording."""
         assert mode in ("drive", "sniff")
         return self._cmd(f"MODE {mode}") == "OK"
+
+    def interact(self, player=0):
+        """Semantic pickup/place via the game's own interaction events
+        (race-free, unlike raw button presses)."""
+        return self._cmd(f"INTERACT {player}") == "OK"
+
+    def throw_item(self, player=0):
+        """Throw the held item via the game's throw event."""
+        return self._cmd(f"THROW {player}") == "OK"
 
     def set_timescale(self, scale):
         """Scale game speed (clamped to [0.25, 8] by the mod)."""

@@ -138,6 +138,11 @@ namespace OC2StateBridge
                             lock (_actionLock) { _pendingActions.Enqueue("@RESET"); }
                             writer.WriteLine("OK");
                         }
+                        else if (line == "ENGAGE")
+                        {
+                            lock (_actionLock) { _pendingActions.Enqueue("@ENGAGE"); }
+                            writer.WriteLine("OK");
+                        }
                         else if (line.StartsWith("TIMESCALE "))
                         {
                             lock (_actionLock) { _pendingActions.Enqueue("@" + line); }
@@ -154,6 +159,11 @@ namespace OC2StateBridge
                             writer.WriteLine("OK");
                         }
                         else if (line.StartsWith("MODE "))
+                        {
+                            lock (_actionLock) { _pendingActions.Enqueue("@" + line); }
+                            writer.WriteLine("OK");
+                        }
+                        else if (line.StartsWith("INTERACT ") || line.StartsWith("THROW "))
                         {
                             lock (_actionLock) { _pendingActions.Enqueue("@" + line); }
                             writer.WriteLine("OK");

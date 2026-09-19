@@ -53,9 +53,7 @@ class OC2Env:
     def reset(self):
         st = self.cli.get_state()
         if st.get("scene") != self.scene or not st.get("in_round"):
-            self.cli.load_level(self.scene)
-            if not self.cli.wait_in_round(True, timeout=90):
-                raise RuntimeError("failed to enter level " + self.scene)
+            self._load_level_robust()
         else:
             self.cli.reset_level()
             self.cli.wait_in_round(False, timeout=30)
@@ -63,10 +61,13 @@ class OC2Env:
                 raise RuntimeError("failed to restart level " + self.scene)
 
         # wait for intro so chefs are controllable
+        t0 = time.time()
         while True:
             st = self.cli.get_state()
             if st["round"]["time_elapsed"] > 4 and len(st.get("players", [])) >= 2:
                 break
+            if time.time() - t0 > 60:
+                raise RuntimeError("players never spawned in " + self.scene)
             time.sleep(0.3)
 
         self.cli.set_timescale(self.timescale)
@@ -102,6 +103,31 @@ class OC2Env:
         self.cli.close()
 
     # ------------------------------------------------------------------
+    def _load_level_robust(self):
+        """From a fresh boot the StartScreen needs one programmatic ENGAGE
+        (the 'press any key' prompt) before a campaign session exists; after
+        that LOADLEVEL bootstraps everything itself. Retry until players
+        actually spawn."""
+        for attempt in range(4):
+            st = self.cli.get_state()
+            if st.get("scene") == "StartScreen":
+                self.cli.engage()
+                time.sleep(5)
+            self.cli.load_level(self.scene)
+            if self.cli.wait_in_round(True, timeout=90):
+                t0 = time.time()
+                while time.time() - t0 < 30:
+                    if len(self.cli.get_state().get("players", [])) >= 2:
+                        return
+                    time.sleep(1)
+                # in_round but no players = broken bare load; loop and retry
+            else:
+                st = self.cli.get_state()
+                if st.get("scene") == "WorldMap":
+                    continue  # session bootstrapped, next attempt works
+        raise RuntimeError("failed to load level " + self.scene)
+
+    # ------------------------------------------------------------------
     def _obs(self, st):
         tensor = self._enc.encode(st)
         g = self._enc.encode_globals(st, self.time_limit)
@@ -122,9 +148,13 @@ class OC2Env:
 
         msg = {"move": (dx * sign[0], -dz * sign[1])}
         name = BTN_NAMES[btn]
-        if name == "pickup" or name == "dash":
-            self.cli.send_action(player=player, **{name: True})  # tap: released next step
-            held[name] = True
+        if name == "pickup":
+            # semantic pickup/place via the game's own interaction events —
+            # raw button taps race the JustPressed claim chain and get lost
+            self.cli.interact(player)
+        elif name == "dash":
+            self.cli.send_action(player=player, dash=True)  # tap: released next step
+            held["dash"] = True
         elif name == "use":
             self.cli.send_action(player=player, use=True)
             held["use"] = True
