@@ -81,6 +81,11 @@ class Panel:
         line("p0", "P0")
         line("p1", "P1")
 
+        section("训练 (PPO)")
+        line("tr_step", "步数")
+        line("tr_score", "近5局分数")
+        line("tr_kl", "KL/EV")
+
         section("锅")
         line("pots", "状态")
 
@@ -185,6 +190,8 @@ class Panel:
                                   c.get("cook_time", 0), len(c.get("contents") or []))
             for c in pots) or "-")
 
+        self._poll_training()
+
         orders = st.get("orders", [])
         for i in range(6):
             if i < len(orders):
@@ -197,6 +204,45 @@ class Panel:
                 self.vars[f"order{i}"].set("")
 
         self.root.after(250, self.tick)
+
+    # ------------------------------------------------ training readout ----------
+    def _poll_training(self):
+        """Read TensorBoard event files every ~5s (cheap tail-parse)."""
+        now = time.time()
+        if now - getattr(self, "_tr_last", 0) < 5:
+            return
+        self._tr_last = now
+        logdir = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                              "..", "..", "logs", "ppo_sushi")
+        try:
+            import glob
+            from tensorboard.backend.event_processing.event_accumulator import EventAccumulator
+            files = sorted(glob.glob(os.path.join(logdir, "events.*")),
+                           key=os.path.getmtime)
+            if not files:
+                return
+            ea = EventAccumulator(files[-1], size_guidance={"scalars": 0})
+            ea.Reload()
+
+            def last(tag):
+                try:
+                    ev = ea.Scalars(tag)
+                    return ev[-1].value if ev else None
+                except KeyError:
+                    return None
+
+            step = last("perf/sps")
+            scores = ea.Scalars("episode/score") if "episode/score" in ea.Tags().get("scalars", []) else []
+            recent = [e.value for e in scores[-5:]]
+            kl = last("train/approx_kl")
+            evv = last("train/explained_var")
+            if scores:
+                self.vars["tr_step"].set("%d steps" % scores[-1].step)
+                self.vars["tr_score"].set("/".join("%.0f" % s for s in recent))
+            if kl is not None:
+                self.vars["tr_kl"].set("kl=%.3f ev=%.2f" % (kl, evv or 0))
+        except Exception:
+            pass
 
     @property
     def _ts(self):
