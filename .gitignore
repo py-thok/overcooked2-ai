@@ -20,3 +20,6 @@ src/sim/logs/
 work/
 mod/OC2StateBridge/bin/
 mod/OC2StateBridge/obj/
+
+# 示范原始数据(大文件，不入库)
+demos/
