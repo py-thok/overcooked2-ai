@@ -83,6 +83,12 @@ class StateBridgeClient:
         """Teleport a player to a world position (calibration/scenario setup)."""
         return self._cmd(f"SETPOS {player} {float(x)} {float(y)} {float(z)}") == "OK"
 
+    def set_mode(self, mode):
+        """'drive': bot controls chefs (default). 'sniff': human controls,
+        inputs are echoed in state for demonstration recording."""
+        assert mode in ("drive", "sniff")
+        return self._cmd(f"MODE {mode}") == "OK"
+
     def set_timescale(self, scale):
         """Scale game speed (clamped to [0.25, 8] by the mod)."""
         return self._cmd(f"TIMESCALE {float(scale)}") == "OK"

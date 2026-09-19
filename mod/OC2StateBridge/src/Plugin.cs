@@ -64,6 +64,10 @@ namespace OC2StateBridge
             {
                 EnvControl.LoadLevelBySceneName(cmd.Substring(11).Trim(), Logger);
             }
+            else if (cmd.StartsWith("@MODE "))
+            {
+                InputInjector.SetMode(cmd.Substring(6).Trim() == "drive", Logger);
+            }
             else if (cmd.StartsWith("@SETPOS "))
             {
                 // @SETPOS <player> <x> <y> <z>

@@ -28,11 +28,48 @@ namespace OC2StateBridge
             public PluginLogicalButton Pickup = new PluginLogicalButton();
             public PluginLogicalButton Use = new PluginLogicalButton();
             public PluginLogicalButton Dash = new PluginLogicalButton();
+            // Originals, saved on first hook so sniff mode can restore them
+            public ILogicalValue OrigMoveX;
+            public ILogicalValue OrigMoveY;
+            public ILogicalButton OrigPickup;
+            public ILogicalButton OrigUse;
+            public ILogicalButton OrigDash;
             public PlayerControls.ControlSchemeData HookedScheme;
         }
 
         private static readonly List<Slot> _slots = new List<Slot>();
         private static float _nextScan;
+        private static bool _driveMode = true;
+
+        /// <summary>drive: replace input slots (bot plays).
+        /// sniff: restore originals (human plays), inputs are echoed in state.</summary>
+        public static void SetMode(bool drive, ManualLogSource log)
+        {
+            _driveMode = drive;
+            for (int i = 0; i < _slots.Count; i++)
+            {
+                Slot slot = _slots[i];
+                PlayerControls.ControlSchemeData scheme = slot.HookedScheme;
+                if (scheme == null || slot.OrigMoveX == null) continue;
+                if (drive)
+                {
+                    if (slot.NetMoveX == null) scheme.m_moveX = slot.MoveX;
+                    if (slot.NetMoveY == null) scheme.m_moveY = slot.MoveY;
+                    if (slot.NetPickup == null) scheme.m_pickupButton = slot.Pickup;
+                    if (slot.NetUse == null) scheme.m_worksurfaceUseButton = slot.Use;
+                    if (slot.NetDash == null) scheme.m_dashButton = slot.Dash;
+                }
+                else
+                {
+                    scheme.m_moveX = slot.OrigMoveX;
+                    scheme.m_moveY = slot.OrigMoveY;
+                    scheme.m_pickupButton = slot.OrigPickup;
+                    scheme.m_worksurfaceUseButton = slot.OrigUse;
+                    scheme.m_dashButton = slot.OrigDash;
+                }
+            }
+            if (log != null) log.LogInfo("[OC2Bridge] input mode = " + (drive ? "drive" : "sniff"));
+        }
 
         /// <summary>Called every frame from Plugin.Update.</summary>
         public static void EnsureHooked(ManualLogSource log)
@@ -57,7 +94,17 @@ namespace OC2StateBridge
 
                 while (_slots.Count <= i) _slots.Add(new Slot());
                 Slot slot = _slots[i];
-                if (ReferenceEquals(slot.HookedScheme, scheme)) continue;
+                if (ReferenceEquals(slot.HookedScheme, scheme) && slot.OrigMoveX != null) continue;
+
+                // Save originals on first hook so sniff mode can restore them.
+                if (!ReferenceEquals(slot.HookedScheme, scheme) || slot.OrigMoveX == null)
+                {
+                    slot.OrigMoveX = scheme.m_moveX;
+                    slot.OrigMoveY = scheme.m_moveY;
+                    slot.OrigPickup = scheme.m_pickupButton;
+                    slot.OrigUse = scheme.m_worksurfaceUseButton;
+                    slot.OrigDash = scheme.m_dashButton;
+                }
 
                 // The server wraps input slots with NetworkLogical* (see
                 // ServerInputReceiver). Driving those keeps the game's input
@@ -68,16 +115,19 @@ namespace OC2StateBridge
                 slot.NetUse = scheme.m_worksurfaceUseButton as NetworkLogicalButton;
                 slot.NetDash = scheme.m_dashButton as NetworkLogicalButton;
 
-                if (slot.NetMoveX == null) scheme.m_moveX = slot.MoveX;
-                if (slot.NetMoveY == null) scheme.m_moveY = slot.MoveY;
-                if (slot.NetPickup == null) scheme.m_pickupButton = slot.Pickup;
-                if (slot.NetUse == null) scheme.m_worksurfaceUseButton = slot.Use;
-                if (slot.NetDash == null) scheme.m_dashButton = slot.Dash;
+                if (_driveMode)
+                {
+                    if (slot.NetMoveX == null) scheme.m_moveX = slot.MoveX;
+                    if (slot.NetMoveY == null) scheme.m_moveY = slot.MoveY;
+                    if (slot.NetPickup == null) scheme.m_pickupButton = slot.Pickup;
+                    if (slot.NetUse == null) scheme.m_worksurfaceUseButton = slot.Use;
+                    if (slot.NetDash == null) scheme.m_dashButton = slot.Dash;
+                }
 
                 slot.HookedScheme = scheme;
                 if (log != null)
                     log.LogInfo("[OC2Bridge] input hooked for player slot " + i + " (" + players[i].name +
-                        ") network-wrappers=" + (slot.NetMoveX != null));
+                        ") network-wrappers=" + (slot.NetMoveX != null) + " mode=" + (_driveMode ? "drive" : "sniff"));
             }
         }
 

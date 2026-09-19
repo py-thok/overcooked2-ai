@@ -153,6 +153,11 @@ namespace OC2StateBridge
                             lock (_actionLock) { _pendingActions.Enqueue("@" + line); }
                             writer.WriteLine("OK");
                         }
+                        else if (line.StartsWith("MODE "))
+                        {
+                            lock (_actionLock) { _pendingActions.Enqueue("@" + line); }
+                            writer.WriteLine("OK");
+                        }
                         else if (line == "PING")
                         {
                             writer.WriteLine("PONG");

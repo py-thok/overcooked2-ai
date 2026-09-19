@@ -191,6 +191,23 @@ namespace OC2StateBridge
                 }
                 w.Key("move_sign"); w.BeginArray(); w.Value(signX); w.Value(signY); w.EndArray();
 
+                // Echo current inputs (human in sniff mode, bot in drive mode)
+                w.Key("input");
+                if (pc != null && pc.ControlScheme != null)
+                {
+                    PlayerControls.ControlSchemeData cs = pc.ControlScheme;
+                    w.BeginObject();
+                    w.Key("move"); w.BeginArray();
+                    w.Value(cs.m_moveX != null ? cs.m_moveX.GetValue() : 0f);
+                    w.Value(cs.m_moveY != null ? cs.m_moveY.GetValue() : 0f);
+                    w.EndArray();
+                    w.Key("pickup"); w.Value(cs.m_pickupButton != null && cs.m_pickupButton.IsDown());
+                    w.Key("use"); w.Value(cs.m_worksurfaceUseButton != null && cs.m_worksurfaceUseButton.IsDown());
+                    w.Key("dash"); w.Value(cs.m_dashButton != null && cs.m_dashButton.IsDown());
+                    w.EndObject();
+                }
+                else w.Null();
+
                 w.Key("held");
                 IPlayerCarrier carrier = (IPlayerCarrier)go.GetComponent(typeof(IPlayerCarrier));
                 GameObject held = null;
