@@ -87,11 +87,12 @@ class OC2Env:
         time.sleep(max(0.0, dt - (time.time() - t0)))
 
         st = self.cli.get_state()
-        reward = self._reward(self._prev, st)
+        reward, parts = self._reward(self._prev, st)
         self._steps += 1
         done = (not st.get("in_round")) or self._steps >= self.max_steps
         info = {"score": st.get("round", {}).get("score", 0),
-                "time_remaining": st.get("round", {}).get("time_remaining", -1)}
+                "time_remaining": st.get("round", {}).get("time_remaining", -1),
+                "reward_parts": parts}
         self._prev = st
         return self._obs(st), reward, done, info
 
@@ -141,9 +142,9 @@ class OC2Env:
         return (1, 1)
 
     def _reward(self, prev, cur):
-        r = 0.0
+        parts = {"score": 0.0, "pot_add": 0.0, "pot_start": 0.0, "pot_cooked": 0.0}
         pr, cr = prev.get("round", {}), cur.get("round", {})
-        r += (cr.get("score", 0) - pr.get("score", 0)) / 20.0
+        parts["score"] = (cr.get("score", 0) - pr.get("score", 0)) / 20.0
         # shaping: pot pipeline (contents added / cooking progressed / cooked)
         prev_pots = {tuple(c["grid"]): c for c in prev.get("cookers", []) if c.get("grid")}
         for c in cur.get("cookers", []):
@@ -155,12 +156,12 @@ class OC2Env:
             pn = len(p.get("contents") or [])
             cn = len(c.get("contents") or [])
             if cn > pn:
-                r += 0.1 * (cn - pn)                      # ingredient added to pot
+                parts["pot_add"] += 0.1 * (cn - pn)          # ingredient added to pot
             if p["progress"] == 0 and c["progress"] > 0:
-                r += 0.2                                  # cooking started
+                parts["pot_start"] += 0.2                    # cooking started
             if not p["is_cooked"] and c["is_cooked"]:
-                r += 0.3                                  # cooking finished
-        return r
+                parts["pot_cooked"] += 0.3                   # cooking finished
+        return sum(parts.values()), parts
 
 
 if __name__ == "__main__":

@@ -69,6 +69,7 @@ def main():
     ap.add_argument("--vf", type=float, default=0.5)
     ap.add_argument("--log-dir", default="logs/ppo_sushi")
     ap.add_argument("--save-every", type=int, default=20)
+    ap.add_argument("--resume", default=None, help="PPO checkpoint to resume from")
     args = ap.parse_args()
 
     env = OC2Env(args.scene, decision_hz=args.decision_hz, timescale=args.timescale)
@@ -81,7 +82,11 @@ def main():
 
     dev = "cuda" if torch.cuda.is_available() else "cpu"
     model = ActorCritic(grid_shape, g_dim).to(dev)
-    if os.path.exists(args.bc):
+    if args.resume and os.path.exists(args.resume):
+        ckpt = torch.load(args.resume, map_location="cpu")
+        model.load_state_dict(ckpt["state_dict"])
+        print(f"resumed PPO weights from {args.resume}")
+    elif os.path.exists(args.bc):
         model.load_bc(args.bc)
     opt = torch.optim.Adam(model.parameters(), lr=args.lr)
     writer = SummaryWriter(args.log_dir)
@@ -93,74 +98,99 @@ def main():
     try:
         while gs < args.total_steps:
             # ---------------- rollout ----------------
-            G, Gl, AM, AB, LP, R, V, D = [], [], [], [], [], [], [], []
+            # buffers are (T_steps, 2 agents) so GAE runs per agent along time
+            G, Gl = [], []          # per (t, agent): obs
+            AM, AB = [], []         # actions
+            LP = np.zeros((0, 2), np.float32)
+            V = np.zeros((0, 2), np.float32)
+            R = np.zeros((0, 2), np.float32)
+            D = np.zeros((0, 2), np.float32)
+            parts_sum = {}
+            ep_ret, ep_len = 0.0, 0
+
             obs = env._obs(env._prev) if env._prev else env.reset()
-            for _ in range(args.rollout):
-                grid = torch.tensor(obs["grid"], dtype=torch.float32, device=dev).unsqueeze(0)
-                step_lp, step_ent = [], []
-                acts = []
-                vals = []
+            for _t in range(args.rollout):
+                grid_np = obs["grid"]
+                grid = torch.tensor(grid_np, dtype=torch.float32, device=dev).unsqueeze(0)
+                acts, vals, logps = [], [], []
                 for p in range(2):
-                    g = torch.tensor(obs["globals"][p], dtype=torch.float32, device=dev).unsqueeze(0)
+                    gp = obs["globals"][p]
+                    g = torch.tensor(gp, dtype=torch.float32, device=dev).unsqueeze(0)
                     with torch.no_grad():
                         lm, lb, v = model(grid, g)
                     am, ab, logp, ent = sample(lm, lb)
                     acts.append(int(am.item()) * 4 + int(ab.item()))
                     vals.append(float(v.item()))
-                    G.append(obs["grid"]); Gl.append(obs["globals"][p])
-                    AM.append(int(am.item())); AB.append(int(ab.item()))
-                    LP.append(float(logp.item())); V.append(vals[-1])
+                    logps.append(float(logp.item()))
+                    G.append(grid_np); Gl.append(gp)
                 obs2, r, done, info = env.step(tuple(acts))
-                for _p in range(2):
-                    R.append(r); D.append(done)
+                for k, vv in info.get("reward_parts", {}).items():
+                    parts_sum[k] = parts_sum.get(k, 0.0) + vv
+                ep_ret += r; ep_len += 1
+                AM.append([a // 4 for a in acts]); AB.append([a % 4 for a in acts])
+                LP = np.vstack([LP, [logps]]); V = np.vstack([V, [vals]])
+                R = np.vstack([R, [[r, r]]]); D = np.vstack([D, [[done, done]]])
                 obs = obs2
                 gs += 2
                 if done:
                     ep_scores.append(info["score"])
                     writer.add_scalar("episode/score", info["score"], gs)
+                    writer.add_scalar("episode/return_shaped", ep_ret, gs)
+                    writer.add_scalar("episode/length", ep_len, gs)
+                    writer.add_scalar("episode/time_remaining", info["time_remaining"], gs)
                     print(f"[{gs}] episode done: score={info['score']} "
                           f"(last5 avg={np.mean(ep_scores[-5:]):.0f})")
+                    ep_ret, ep_len = 0.0, 0
                     obs = env.reset()
 
-            # ---------------- GAE ----------------
-            with torch.no_grad():
-                grid = torch.tensor(obs["grid"], dtype=torch.float32, device=dev).unsqueeze(0)
-                next_v = 0.0
-                if not D[-1]:
-                    g = torch.tensor(obs["globals"][1], dtype=torch.float32, device=dev).unsqueeze(0)
-                    _, _, nv = model(grid, g)
-                    next_v = float(nv.item())
-            T = len(R)
-            adv = np.zeros(T, dtype=np.float32)
-            lastgae = 0.0
-            for t in reversed(range(T)):
-                nv = next_v if t == T - 1 else V[t + 1]
-                nonterminal = 1.0 - float(D[t])
-                delta = R[t] + args.gamma * nv * nonterminal - V[t]
-                lastgae = delta + args.gamma * args.lam * nonterminal * lastgae
-                adv[t] = lastgae
-            ret = adv + np.array(V, dtype=np.float32)
+            # ---------------- GAE per agent ----------------
+            T = V.shape[0]
+            adv = np.zeros((T, 2), np.float32)
+            for p in range(2):
+                if D[-1, p]:
+                    next_v = 0.0
+                else:
+                    with torch.no_grad():
+                        grid = torch.tensor(obs["grid"], dtype=torch.float32, device=dev).unsqueeze(0)
+                        g = torch.tensor(obs["globals"][p], dtype=torch.float32, device=dev).unsqueeze(0)
+                        _, _, nv = model(grid, g)
+                        next_v = float(nv.item())
+                lastgae = 0.0
+                for t in reversed(range(T)):
+                    nv = next_v if t == T - 1 else V[t + 1, p]
+                    nonterminal = 1.0 - D[t, p]
+                    delta = R[t, p] + args.gamma * nv * nonterminal - V[t, p]
+                    lastgae = delta + args.gamma * args.lam * nonterminal * lastgae
+                    adv[t, p] = lastgae
+            ret = adv + V
 
-            # ---------------- PPO update ----------------
-            tG = torch.tensor(np.stack(G), dtype=torch.float32, device=dev)
-            tL = torch.tensor(np.stack(Gl), dtype=torch.float32, device=dev)
-            tAM = torch.tensor(AM, dtype=torch.long, device=dev)
-            tAB = torch.tensor(AB, dtype=torch.long, device=dev)
-            tLP = torch.tensor(LP, dtype=torch.float32, device=dev)
-            tA = torch.tensor(adv, dtype=torch.float32, device=dev)
-            tR = torch.tensor(ret, dtype=torch.float32, device=dev)
+            # flatten (T,2) -> (2T,)
+            G = np.stack(G); Gl = np.stack(Gl)
+            AMf = np.array(AM).reshape(-1); ABf = np.array(AB).reshape(-1)
+            LPf = LP.reshape(-1); ADVf = adv.reshape(-1); RETf = ret.reshape(-1)
+            tG = torch.tensor(G, dtype=torch.float32, device=dev)
+            tL = torch.tensor(Gl, dtype=torch.float32, device=dev)
+            tAM = torch.tensor(AMf, dtype=torch.long, device=dev)
+            tAB = torch.tensor(ABf, dtype=torch.long, device=dev)
+            tLP = torch.tensor(LPf, dtype=torch.float32, device=dev)
+            tA = torch.tensor(ADVf, dtype=torch.float32, device=dev)
+            tR = torch.tensor(RETf, dtype=torch.float32, device=dev)
             tA = (tA - tA.mean()) / (tA.std() + 1e-8)
 
-            idx = np.arange(T)
+            # ---------------- PPO update ----------------
+            N = len(AMf)
+            idx = np.arange(N)
+            approx_kl = clipfrac = 0.0
             for _ in range(args.epochs):
                 np.random.shuffle(idx)
-                for s in range(0, T, args.minibatch):
+                for s in range(0, N, args.minibatch):
                     b = idx[s:s + args.minibatch]
                     lm, lb, v = model(tG[b], tL[b])
                     dm = torch.distributions.Categorical(logits=lm)
                     db = torch.distributions.Categorical(logits=lb)
                     logp = dm.log_prob(tAM[b]) + db.log_prob(tAB[b])
-                    ratio = torch.exp(logp - tLP[b])
+                    logratio = logp - tLP[b]
+                    ratio = torch.exp(logratio)
                     s1 = ratio * tA[b]
                     s2 = torch.clamp(ratio, 1 - args.clip, 1 + args.clip) * tA[b]
                     pi_loss = -torch.min(s1, s2).mean()
@@ -170,20 +200,31 @@ def main():
                     opt.zero_grad(); loss.backward()
                     nn.utils.clip_grad_norm_(model.parameters(), 0.5)
                     opt.step()
+                    approx_kl = float((-logratio).mean().item())
+                    clipfrac = float((torch.abs(ratio - 1) > args.clip).float().mean().item())
+
+            # explained variance of the value function
+            ev = float(1 - np.var(RETf - V.reshape(-1)) / (np.var(RETf) + 1e-8))
 
             update += 1
+            sps = gs / max(time.time() - t_start, 1)
             writer.add_scalar("train/pi_loss", pi_loss.item(), gs)
             writer.add_scalar("train/v_loss", v_loss.item(), gs)
             writer.add_scalar("train/entropy", ent.item(), gs)
+            writer.add_scalar("train/approx_kl", approx_kl, gs)
+            writer.add_scalar("train/clipfrac", clipfrac, gs)
+            writer.add_scalar("train/explained_var", ev, gs)
+            writer.add_scalar("perf/sps", sps, gs)
+            for k, vv in parts_sum.items():
+                writer.add_scalar(f"reward/{k}", vv, gs)
             if update % args.save_every == 0:
                 path = f"checkpoints/ppo_sushi_{gs}.pt"
                 torch.save({"state_dict": model.state_dict(),
                             "grid_shape": list(grid_shape), "g_dim": g_dim}, path)
                 print(f"saved {path}")
-            rate = gs / max(time.time() - t_start, 1)
             print(f"[{gs}/{args.total_steps}] update {update} done, "
                   f"pi={pi_loss.item():+.3f} v={v_loss.item():.3f} ent={ent.item():.3f} "
-                  f"({rate:.0f} trans/s)")
+                  f"kl={approx_kl:.4f} ev={ev:.2f} ({sps:.0f} trans/s)")
     except KeyboardInterrupt:
         print("\ninterrupted")
     finally:

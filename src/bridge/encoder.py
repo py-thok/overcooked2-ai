@@ -110,13 +110,17 @@ class ObsEncoder:
 
     def encode_globals(self, st, time_limit=210.0):
         r = st.get("round", {})
-        g = [r.get("time_remaining", 0) / time_limit, r.get("score", 0) / 500.0]
+        tl = r.get("time_limit") if r.get("time_limit", -1) > 0 else time_limit
+        g = [r.get("time_remaining", 0) / tl, r.get("score", 0) / 500.0]
         for i in range(2):
             held = None
             players = st.get("players", [])
             if i < len(players):
                 held = players[i].get("held")
             g += _held_onehot(held["name"] if held else None)
+            # plate contents matter: empty plate vs loaded plate look the same by name
+            n_contents = len(held.get("contents") or []) if held else 0
+            g.append(min(n_contents, 4) / 4.0)
         orders = st.get("orders", [])[:MAX_ORDERS]
         for k in range(MAX_ORDERS):
             if k < len(orders):
