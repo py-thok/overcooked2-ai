@@ -221,8 +221,20 @@ class OC2Env:
             return players[player]["move_sign"]
         return (1, 1)
 
+    @staticmethod
+    def _held_name(player_state):
+        h = player_state.get("held")
+        return h.get("name") if h else None
+
+    @staticmethod
+    def _is_ingredient(name):
+        # SushiRice, Cucumber, ChoppedCucumber, fish, nori, ... — anything
+        # that is not cookware/tableware
+        return name is not None and not name.startswith(("utensil_", "equipment_"))
+
     def _reward(self, prev, cur):
-        parts = {"score": 0.0, "pot_add": 0.0, "pot_start": 0.0, "pot_cooked": 0.0}
+        parts = {"score": 0.0, "pot_add": 0.0, "pot_start": 0.0, "pot_cooked": 0.0,
+                 "held_ing": 0.0, "held_utensil": 0.0}
         pr, cr = prev.get("round", {}), cur.get("round", {})
         parts["score"] = (cr.get("score", 0) - pr.get("score", 0)) / 20.0
         # shaping: pot pipeline (contents added / cooking progressed / cooked)
@@ -241,6 +253,18 @@ class OC2Env:
                 parts["pot_start"] += 0.2                    # cooking started
             if not p["is_cooked"] and c["is_cooked"]:
                 parts["pot_cooked"] += 0.3                   # cooking finished
+        # shaping: held-item transitions (symmetric so pick/drop cycling nets 0)
+        pp, cp = prev.get("players", []), cur.get("players", [])
+        for i in range(min(len(pp), len(cp))):
+            ph, ch = self._held_name(pp[i]), self._held_name(cp[i])
+            if ph == ch:
+                continue
+            if ch is not None and self._is_ingredient(ch):
+                parts["held_ing"] += 0.05                    # picked up an ingredient
+            if ph is not None and self._is_ingredient(ph) and ch is None:
+                parts["held_ing"] -= 0.05                    # put it down (pot_add nets +)
+            if ch is not None and ch.startswith("utensil_"):
+                parts["held_utensil"] -= 0.1                 # grabbed a pot/extinguisher
         return sum(parts.values()), parts
 
 
