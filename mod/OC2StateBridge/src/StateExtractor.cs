@@ -29,7 +29,14 @@ namespace OC2StateBridge
         private static float _nextGridScan;
         private static ServerCookingHandler[] _cookers = new ServerCookingHandler[0];
         private static float _nextCookerScan;
+        private static PhysicalAttachment[] _items = new PhysicalAttachment[0];
+        private static float _nextItemScan;
         private static int _seq;
+        private static string _stationsJson = "{}";
+        private static float _nextStationScan;
+
+        /// <summary>Latest station census JSON (refreshed in Collect).</summary>
+        public static string StationsJson { get { return _stationsJson; } }
 
         public static string Collect()
         {
@@ -47,9 +54,16 @@ namespace OC2StateBridge
             WriteRound(w, flow);
             WritePlayers(w);
             WriteCookers(w);
+            WriteItems(w);
             WriteOrders(w, flow);
 
             w.EndObject();
+
+            if (Time.time >= _nextStationScan)
+            {
+                _nextStationScan = Time.time + 2f;
+                try { _stationsJson = CollectStations(); } catch { }
+            }
             return sb.ToString();
         }
 
@@ -159,6 +173,24 @@ namespace OC2StateBridge
                     playerId = (int)pc.ControlScheme.Player;
                 w.Key("player_id"); w.Value(playerId);
 
+                // Movement input maps directly to world axes:
+                //   world_dir = (signX * inputX, -signY * inputY)
+                // (PlayerControlsHelper.GetControlAxis). Expose the per-level
+                // inversion signs so clients can convert directions exactly.
+                int signX = 1, signY = 1;
+                if (pc != null)
+                {
+                    object mov = GetField(pc, "m_movement");
+                    if (mov != null)
+                    {
+                        object ix = GetField(mov, "XAxisAllignment");
+                        object iy = GetField(mov, "YAxisAllignment");
+                        if (ix != null && (int)ix != 0) signX = -1;
+                        if (iy != null && (int)iy != 0) signY = -1;
+                    }
+                }
+                w.Key("move_sign"); w.BeginArray(); w.Value(signX); w.Value(signY); w.EndArray();
+
                 w.Key("held");
                 IPlayerCarrier carrier = (IPlayerCarrier)go.GetComponent(typeof(IPlayerCarrier));
                 GameObject held = null;
@@ -171,6 +203,73 @@ namespace OC2StateBridge
                 w.EndObject();
             }
             w.EndArray();
+        }
+
+        private static void WriteItems(JsonWriter w)
+        {
+            // Loose/carried items: scan PhysicalAttachment objects periodically.
+            // Held items are reported per-player already; this covers items on
+            // counters / floor / stations.
+            if (Time.time >= _nextItemScan)
+            {
+                _nextItemScan = Time.time + 0.3f;
+                try { _items = UnityEngine.Object.FindObjectsOfType<PhysicalAttachment>(); }
+                catch { _items = new PhysicalAttachment[0]; }
+            }
+            w.Key("items");
+            w.BeginArray();
+            foreach (PhysicalAttachment pa in _items)
+            {
+                if (pa == null) continue;
+                GameObject go = pa.gameObject;
+                w.BeginObject();
+                w.Key("name"); w.Value(CleanName(go.name));
+                Vector3 pos = go.transform.position;
+                w.Key("pos"); WriteVec3(w, pos);
+                w.Key("grid"); WriteGridIndex(w, pos);
+                w.Key("kind"); w.Value(ClassifyItem(go));
+                w.EndObject();
+            }
+            w.EndArray();
+        }
+
+        private static string ClassifyItem(GameObject go)
+        {
+            if (go.GetComponent<Plate>() != null) return "plate";
+            if (go.GetComponent<CookableContainer>() != null) return "utensil";
+            if (go.GetComponent<CarryableItem>() != null) return "carryable";
+            return "object";
+        }
+
+        /// <summary>One-shot census of attach stations (STATIONS command).</summary>
+        public static string CollectStations()
+        {
+            StringBuilder sb = new StringBuilder(8192);
+            JsonWriter w = new JsonWriter(sb);
+            w.BeginObject();
+            w.Key("scene"); w.Value(SceneManager.GetActiveScene().name);
+            GridManager grid = GridManager.GetActiveCount() > 0 ? GridManager.GetActive(0) : null;
+            w.Key("stations");
+            w.BeginArray();
+            ClientAttachStation[] stations = UnityEngine.Object.FindObjectsOfType<ClientAttachStation>();
+            foreach (ClientAttachStation st in stations)
+            {
+                if (st == null) continue;
+                w.BeginObject();
+                w.Key("name"); w.Value(CleanName(st.gameObject.name));
+                Vector3 pos = st.transform.position;
+                w.Key("pos"); WriteVec3(w, pos);
+                if (grid != null)
+                {
+                    GridIndex gi = grid.GetGridLocationFromPos(pos);
+                    w.Key("grid"); w.BeginArray(); w.Value(gi.X); w.Value(gi.Y); w.Value(gi.Z); w.EndArray();
+                }
+                else { w.Key("grid"); w.Null(); }
+                w.EndObject();
+            }
+            w.EndArray();
+            w.EndObject();
+            return sb.ToString();
         }
 
         private static void WriteCookers(JsonWriter w)

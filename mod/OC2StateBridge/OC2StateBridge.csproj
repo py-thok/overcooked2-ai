@@ -42,6 +42,10 @@
       <HintPath>$(OC2Managed)\UnityEngine.CoreModule.dll</HintPath>
       <Private>false</Private>
     </Reference>
+    <Reference Include="UnityEngine.PhysicsModule">
+      <HintPath>$(OC2Managed)\UnityEngine.PhysicsModule.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
   </ItemGroup>
 
   <!-- Drop the built plugin straight into BepInEx/plugins when BepInEx is installed -->

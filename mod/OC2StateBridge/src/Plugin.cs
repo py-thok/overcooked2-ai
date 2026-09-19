@@ -34,6 +34,7 @@ namespace OC2StateBridge
             // the network thread only serves the latest snapshot string.
             string json = StateExtractor.Collect();
             _server.PublishState(json);
+            _server.PublishStations(StateExtractor.StationsJson);
 
             InputInjector.EnsureHooked(Logger);
             _server.DrainActions(DispatchCommand);
@@ -58,6 +59,24 @@ namespace OC2StateBridge
                         System.Globalization.NumberStyles.Float,
                         System.Globalization.CultureInfo.InvariantCulture, out scale))
                     EnvControl.SetTimeScale(scale, Logger);
+            }
+            else if (cmd.StartsWith("@LOADLEVEL "))
+            {
+                EnvControl.LoadLevelBySceneName(cmd.Substring(11).Trim(), Logger);
+            }
+            else if (cmd.StartsWith("@SETPOS "))
+            {
+                // @SETPOS <player> <x> <y> <z>
+                string[] parts = cmd.Substring(8).Split(' ');
+                if (parts.Length == 4)
+                {
+                    int p = int.Parse(parts[0]);
+                    UnityEngine.Vector3 pos = new UnityEngine.Vector3(
+                        float.Parse(parts[1], System.Globalization.CultureInfo.InvariantCulture),
+                        float.Parse(parts[2], System.Globalization.CultureInfo.InvariantCulture),
+                        float.Parse(parts[3], System.Globalization.CultureInfo.InvariantCulture));
+                    EnvControl.SetPlayerPos(p, pos, Logger);
+                }
             }
             else
             {

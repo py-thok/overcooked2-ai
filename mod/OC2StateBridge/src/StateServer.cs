@@ -25,6 +25,7 @@ namespace OC2StateBridge
 
         private readonly object _stateLock = new object();
         private string _latestState = "{}";
+        private string _latestStations = "{}";
 
         private readonly object _actionLock = new object();
         private readonly Queue<string> _pendingActions = new Queue<string>();
@@ -52,6 +53,11 @@ namespace OC2StateBridge
         public void PublishState(string json)
         {
             lock (_stateLock) { _latestState = json; }
+        }
+
+        public void PublishStations(string json)
+        {
+            lock (_stateLock) { _latestStations = json; }
         }
 
         /// <summary>Called on the main thread; applies every queued action line.</summary>
@@ -116,6 +122,12 @@ namespace OC2StateBridge
                             lock (_stateLock) { snapshot = _latestState; }
                             writer.WriteLine(snapshot);
                         }
+                        else if (line == "STATIONS")
+                        {
+                            string stations;
+                            lock (_stateLock) { stations = _latestStations; }
+                            writer.WriteLine(stations);
+                        }
                         else if (line.StartsWith("ACTION "))
                         {
                             lock (_actionLock) { _pendingActions.Enqueue(line.Substring(7)); }
@@ -127,6 +139,16 @@ namespace OC2StateBridge
                             writer.WriteLine("OK");
                         }
                         else if (line.StartsWith("TIMESCALE "))
+                        {
+                            lock (_actionLock) { _pendingActions.Enqueue("@" + line); }
+                            writer.WriteLine("OK");
+                        }
+                        else if (line.StartsWith("LOADLEVEL "))
+                        {
+                            lock (_actionLock) { _pendingActions.Enqueue("@" + line); }
+                            writer.WriteLine("OK");
+                        }
+                        else if (line.StartsWith("SETPOS "))
                         {
                             lock (_actionLock) { _pendingActions.Enqueue("@" + line); }
                             writer.WriteLine("OK");

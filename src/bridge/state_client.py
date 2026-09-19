@@ -49,6 +49,10 @@ class StateBridgeClient:
     def get_state(self):
         return json.loads(self._cmd("GET"))
 
+    def get_stations(self):
+        """Static station census for the current level (refreshed every 2s)."""
+        return json.loads(self._cmd("STATIONS"))
+
     def send_action(self, move=(0.0, 0.0), player=0, pickup=None, use=None, dash=None):
         """move: (x, y) analog axes in [-1, 1]. Buttons are hold-semantics:
         pass True to hold, False to release, None to leave unchanged."""
@@ -70,6 +74,14 @@ class StateBridgeClient:
     def reset_level(self):
         """Restart the current level via the game's own flow."""
         return self._cmd("RESET") == "OK"
+
+    def load_level(self, scene_name):
+        """Load a kitchen level by scene name, from anywhere."""
+        return self._cmd(f"LOADLEVEL {scene_name}") == "OK"
+
+    def set_player_pos(self, x, y, z, player=0):
+        """Teleport a player to a world position (calibration/scenario setup)."""
+        return self._cmd(f"SETPOS {player} {float(x)} {float(y)} {float(z)}") == "OK"
 
     def set_timescale(self, scale):
         """Scale game speed (clamped to [0.25, 8] by the mod)."""
