@@ -92,11 +92,14 @@ class OC2Env:
         self._steps += 1
         # A GET issued just before scene reload is answered only after the new
         # round starts (main thread busy), so in_round=False is never observed
-        # for that transition. Detect the round restart via the timer jump.
+        # for that transition; and the round timer object is destroyed before
+        # the flow controller (tr=-1 while in_round=True). Detect the round
+        # boundary via timer discontinuities instead.
         tr_prev = self._prev.get("round", {}).get("time_remaining", -1)
         tr_cur = st.get("round", {}).get("time_remaining", -1)
         round_restarted = (st.get("in_round") and self._prev.get("in_round")
-                           and tr_prev >= 0 and tr_cur > tr_prev + 5)
+                           and ((tr_prev >= 0 and tr_cur < 0)          # timer vanished
+                                or tr_cur > tr_prev + 5))              # timer jumped up
         if round_restarted and parts.get("score", 0) < 0:
             # score reset 0 with the new round is not a penalty
             reward -= parts["score"]
