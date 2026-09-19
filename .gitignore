@@ -15,3 +15,8 @@ src/sim/logs/
 # 环境
 .venv/
 *.egg-info/
+
+# 反编译与构建产物
+work/
+mod/OC2StateBridge/bin/
+mod/OC2StateBridge/obj/

@@ -1,0 +1,54 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net35</TargetFramework>
+    <LangVersion>7.3</LangVersion>
+    <AssemblyName>OC2StateBridge</AssemblyName>
+    <RootNamespace>OC2StateBridge</RootNamespace>
+    <!-- Path to the Overcooked! 2 install (the folder containing Overcooked2.exe).
+         Override on the command line: dotnet build -p:OC2Dir="E:\SteamLibrary\steamapps\common\Overcooked! 2" -->
+    <OC2Dir Condition="'$(OC2Dir)' == ''">E:\SteamLibrary\steamapps\common\Overcooked! 2</OC2Dir>
+    <OC2Managed>$(OC2Dir)\Overcooked2_Data\Managed</OC2Managed>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- net35 reference assemblies so the project builds without the .NET 3.5 targeting pack -->
+    <PackageReference Include="Microsoft.NETFramework.ReferenceAssemblies.net35" Version="1.0.3" PrivateAssets="all" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- BepInEx (compile-time only; ships with the game-side BepInEx install) -->
+    <Reference Include="BepInEx">
+      <HintPath>..\libs\BepInEx.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Game assemblies (compile-time only, never copy to output) -->
+    <Reference Include="Assembly-CSharp">
+      <HintPath>$(OC2Managed)\Assembly-CSharp.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="Assembly-CSharp-firstpass">
+      <HintPath>$(OC2Managed)\Assembly-CSharp-firstpass.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="UnityEngine">
+      <HintPath>$(OC2Managed)\UnityEngine.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="UnityEngine.CoreModule">
+      <HintPath>$(OC2Managed)\UnityEngine.CoreModule.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+  </ItemGroup>
+
+  <!-- Drop the built plugin straight into BepInEx/plugins when BepInEx is installed -->
+  <Target Name="DeployToGame" AfterTargets="Build"
+          Condition="Exists('$(OC2Dir)\BepInEx\plugins')">
+    <Copy SourceFiles="$(TargetPath)" DestinationFolder="$(OC2Dir)\BepInEx\plugins" />
+    <Message Text="Deployed OC2StateBridge.dll to $(OC2Dir)\BepInEx\plugins" Importance="high" />
+  </Target>
+
+</Project>

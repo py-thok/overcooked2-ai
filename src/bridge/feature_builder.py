@@ -6,12 +6,14 @@ MLP was trained on, by delegating distance computation to the SAME MotionPlanner
 the simulator uses (critical: dx/dy are A* path costs, not euclidean).
 """
 import sys, os
-sys.path.insert(0, "/root/data/overcooked2-ai/src/sim")
+_THIS_DIR = os.path.dirname(os.path.abspath(__file__))
+if _THIS_DIR not in sys.path:
+    sys.path.insert(0, _THIS_DIR)
 from dataclasses import dataclass, field
 import numpy as np
 
 from overcooked_ai_py.mdp.overcooked_mdp import (
-    OvercookedGridworld, OvercookedState, PlayerState, ObjectState,
+    OvercookedGridworld, OvercookedState, PlayerState, ObjectState, SoupState,
 )
 from overcooked_ai_py.mdp.overcooked_env import OvercookedEnv as OAIEnv
 
@@ -46,7 +48,7 @@ class FeatureBuilder:
             if held is not None:
                 # minimal ObjectState for held item
                 if held == "soup":
-                    held_obj = ObjectState("soup", pos, ingredients=["onion"]*3)
+                    held_obj = SoupState(pos, ingredients=[ObjectState("onion", pos) for _ in range(3)])
                 else:
                     held_obj = ObjectState(held, pos)
             players.append(PlayerState(pos, orient, held_object=held_obj))
