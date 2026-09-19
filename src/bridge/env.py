@@ -127,6 +127,8 @@ class OC2Env:
             return True
         if not self._prev.get("in_round"):
             return False
+        if tr_prev == 0 and tr_cur == 0:
+            return True  # timer pinned at 0 = outro screen, round is over
         return (tr_prev >= 0 and tr_cur < 0) or tr_cur > tr_prev + 5
 
     def _confirm_boundary(self, st0, tr_prev):
