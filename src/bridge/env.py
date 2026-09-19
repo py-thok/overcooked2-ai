@@ -70,6 +70,7 @@ class OC2Env:
             time.sleep(0.3)
 
         self.cli.set_timescale(self.timescale)
+        self.cli.set_mode("drive")
         self._enc = ObsEncoder(self.cli.get_stations())
         self._release_all()
         self._steps = 0

@@ -39,7 +39,10 @@ namespace OC2StateBridge
 
         private static readonly List<Slot> _slots = new List<Slot>();
         private static float _nextScan;
-        private static bool _driveMode = true;
+        // Default sniff: never touch input slots until drive is explicitly
+        // requested. (Restoring slots after drive->sniff can resurrect stale
+        // objects — the game re-wraps slots per level load.)
+        private static bool _driveMode = false;
 
         /// <summary>drive: replace input slots (bot plays).
         /// sniff: restore originals (human plays), inputs are echoed in state.</summary>
@@ -61,11 +64,14 @@ namespace OC2StateBridge
                 }
                 else
                 {
-                    scheme.m_moveX = slot.OrigMoveX;
-                    scheme.m_moveY = slot.OrigMoveY;
-                    scheme.m_pickupButton = slot.OrigPickup;
-                    scheme.m_worksurfaceUseButton = slot.OrigUse;
-                    scheme.m_dashButton = slot.OrigDash;
+                    // Restore only slots that still hold OUR objects; if the
+                    // game re-wrapped a slot since (Network* etc.), its chain
+                    // is live and must not be stomped with a stale original.
+                    if (ReferenceEquals(scheme.m_moveX, slot.MoveX)) scheme.m_moveX = slot.OrigMoveX;
+                    if (ReferenceEquals(scheme.m_moveY, slot.MoveY)) scheme.m_moveY = slot.OrigMoveY;
+                    if (ReferenceEquals(scheme.m_pickupButton, slot.Pickup)) scheme.m_pickupButton = slot.OrigPickup;
+                    if (ReferenceEquals(scheme.m_worksurfaceUseButton, slot.Use)) scheme.m_worksurfaceUseButton = slot.OrigUse;
+                    if (ReferenceEquals(scheme.m_dashButton, slot.Dash)) scheme.m_dashButton = slot.OrigDash;
                 }
             }
             if (log != null) log.LogInfo("[OC2Bridge] input mode = " + (drive ? "drive" : "sniff"));
@@ -97,13 +103,18 @@ namespace OC2StateBridge
                 if (ReferenceEquals(slot.HookedScheme, scheme) && slot.OrigMoveX != null) continue;
 
                 // Save originals on first hook so sniff mode can restore them.
-                if (!ReferenceEquals(slot.HookedScheme, scheme) || slot.OrigMoveX == null)
+                // Never save our own plugin objects as "originals".
+                if (slot.OrigMoveX == null ||
+                    (!ReferenceEquals(scheme.m_moveX, slot.MoveX) && !ReferenceEquals(scheme.m_moveX, slot.OrigMoveX)))
                 {
-                    slot.OrigMoveX = scheme.m_moveX;
-                    slot.OrigMoveY = scheme.m_moveY;
-                    slot.OrigPickup = scheme.m_pickupButton;
-                    slot.OrigUse = scheme.m_worksurfaceUseButton;
-                    slot.OrigDash = scheme.m_dashButton;
+                    if (!ReferenceEquals(scheme.m_moveX, slot.MoveX))
+                    {
+                        slot.OrigMoveX = scheme.m_moveX;
+                        slot.OrigMoveY = scheme.m_moveY;
+                        slot.OrigPickup = scheme.m_pickupButton;
+                        slot.OrigUse = scheme.m_worksurfaceUseButton;
+                        slot.OrigDash = scheme.m_dashButton;
+                    }
                 }
 
                 // The server wraps input slots with NetworkLogical* (see

@@ -124,7 +124,7 @@ class ObsEncoder:
                 g += _recipe_onehot(o.get("recipe"))
                 g.append(o.get("remaining", 0) / max(o.get("lifetime", 1), 1))
             else:
-                g += [0.0] * (len(RECIPES) + 1)
+                g += [0.0] * (len(RECIPES) + 2)  # recipe onehot + remaining
         return np.asarray(g, np.float32)
 
 

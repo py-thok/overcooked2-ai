@@ -26,7 +26,7 @@ ERR = "#f44747"
 class Panel:
     def __init__(self):
         self.cli = None
-        self.mode = "drive"
+        self.mode = "sniff"  # mod now boots in sniff mode
         self.root = tk.Tk()
         r = self.root
         r.title("OC2 Bridge")
@@ -139,7 +139,6 @@ class Panel:
         if self.cli is None:
             try:
                 self.cli = StateBridgeClient().connect()
-                self.mode = "drive"
             except OSError:
                 self.vars["conn"].set("未连接 (游戏未启动?)")
                 self._clear()

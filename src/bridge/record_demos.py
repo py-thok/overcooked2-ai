@@ -56,6 +56,7 @@ def quantize(player):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--rounds", type=int, default=3)
+    ap.add_argument("--start", type=int, default=0, help="first round index (file numbering)")
     ap.add_argument("--out", default="demos/sushi")
     ap.add_argument("--scene", default="s_sushi_1_4")
     ap.add_argument("--hz", type=float, default=10.0)
@@ -67,6 +68,7 @@ def main():
     print("sniff mode on - you control the chefs. Recording...")
     try:
         for rnd in range(args.rounds):
+            file_idx = args.start + rnd
             st = cli.get_state()
             if st.get("scene") != args.scene or not st.get("in_round"):
                 cli.load_level(args.scene)
@@ -74,7 +76,7 @@ def main():
             # skip intro
             while cli.get_state()["round"]["time_elapsed"] < 4:
                 time.sleep(0.3)
-            print(f"round {rnd}: recording (play!)")
+            print(f"round {file_idx}: recording (play!)", flush=True)
 
             states, a0s, a1s = [], [], []
             t_next = time.time()
@@ -91,12 +93,12 @@ def main():
                 time.sleep(max(0.0, t_next - time.time()))
 
             score = st.get("round", {}).get("score", 0) if st else 0
-            base = os.path.join(args.out, f"round_{rnd:03d}")
+            base = os.path.join(args.out, f"round_{file_idx:03d}")
             with open(base + ".jsonl", "w") as f:
                 for st in states:
                     f.write(json.dumps(st) + "\n")
             np.savez_compressed(base + "_actions.npz", a0=a0s, a1=a1s)
-            print(f"round {rnd}: saved {len(states)} frames, score={score}")
+            print(f"round {file_idx}: saved {len(states)} frames, score={score}", flush=True)
 
             if rnd + 1 < args.rounds:
                 print("restarting level for next round...")
