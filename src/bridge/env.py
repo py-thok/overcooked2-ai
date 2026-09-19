@@ -90,30 +90,62 @@ class OC2Env:
         st = self.cli.get_state()
         reward, parts = self._reward(self._prev, st)
         self._steps += 1
-        # A GET issued just before scene reload is answered only after the new
-        # round starts (main thread busy), so in_round=False is never observed
-        # for that transition; and the round timer object is destroyed before
-        # the flow controller (tr=-1 while in_round=True). Detect the round
-        # boundary via timer discontinuities instead.
+        # Round boundary detection. The flow controller can flicker null
+        # mid-round (false in_round=False), and scene reload can swallow the
+        # in_round=False window entirely (main thread busy) — so candidates
+        # are confirmed with re-reads, and timer discontinuities count too.
         tr_prev = self._prev.get("round", {}).get("time_remaining", -1)
         tr_cur = st.get("round", {}).get("time_remaining", -1)
-        round_restarted = (st.get("in_round") and self._prev.get("in_round")
-                           and ((tr_prev >= 0 and tr_cur < 0)          # timer vanished
-                                or tr_cur > tr_prev + 5))              # timer jumped up
+        done = False
+        round_restarted = False
+        if self._steps >= self.max_steps:
+            done = True
+        elif self._boundary_candidate(st, tr_prev):
+            st2, round_restarted = self._confirm_boundary(st, tr_prev)
+            if st2 is not None:
+                st = st2
+                tr_cur = st.get("round", {}).get("time_remaining", -1)
+                done = True
         if round_restarted and parts.get("score", 0) < 0:
             # score reset 0 with the new round is not a penalty
             reward -= parts["score"]
             parts["score"] = 0.0
-        done = (not st.get("in_round")) or round_restarted or self._steps >= self.max_steps
         # score resets to 0 with the new round; the episode's final score was
         # visible in the previous state
-        score = (self._prev.get("round", {}).get("score", 0) if round_restarted
+        score = (self._prev.get("round", {}).get("score", 0)
+                 if round_restarted or tr_cur < 0
                  else st.get("round", {}).get("score", 0))
         info = {"score": score,
                 "time_remaining": tr_cur,
                 "reward_parts": parts}
         self._prev = st
         return self._obs(st), reward, done, info
+
+    def _boundary_candidate(self, st, tr_prev):
+        tr_cur = st.get("round", {}).get("time_remaining", -1)
+        if not st.get("in_round"):
+            return True
+        if not self._prev.get("in_round"):
+            return False
+        return (tr_prev >= 0 and tr_cur < 0) or tr_cur > tr_prev + 5
+
+    def _confirm_boundary(self, st0, tr_prev):
+        """Confirm a round-end candidate with a few re-reads (rejects
+        transient flow/timer glitches). Returns (state_to_use, restarted)
+        or (None, False) if the candidate was a glitch."""
+        votes = 0
+        st = st0
+        for _ in range(3):
+            if not self._boundary_candidate(st, tr_prev):
+                break
+            votes += 1
+            time.sleep(0.1)
+            st = self.cli.get_state()
+        if votes < 3:
+            return None, False
+        tr_cur = st.get("round", {}).get("time_remaining", -1)
+        restarted = st.get("in_round") and tr_cur > 0
+        return st, restarted
 
     def close(self):
         self._release_all()
