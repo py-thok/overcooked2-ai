@@ -90,9 +90,24 @@ class OC2Env:
         st = self.cli.get_state()
         reward, parts = self._reward(self._prev, st)
         self._steps += 1
-        done = (not st.get("in_round")) or self._steps >= self.max_steps
-        info = {"score": st.get("round", {}).get("score", 0),
-                "time_remaining": st.get("round", {}).get("time_remaining", -1),
+        # A GET issued just before scene reload is answered only after the new
+        # round starts (main thread busy), so in_round=False is never observed
+        # for that transition. Detect the round restart via the timer jump.
+        tr_prev = self._prev.get("round", {}).get("time_remaining", -1)
+        tr_cur = st.get("round", {}).get("time_remaining", -1)
+        round_restarted = (st.get("in_round") and self._prev.get("in_round")
+                           and tr_prev >= 0 and tr_cur > tr_prev + 5)
+        if round_restarted and parts.get("score", 0) < 0:
+            # score reset 0 with the new round is not a penalty
+            reward -= parts["score"]
+            parts["score"] = 0.0
+        done = (not st.get("in_round")) or round_restarted or self._steps >= self.max_steps
+        # score resets to 0 with the new round; the episode's final score was
+        # visible in the previous state
+        score = (self._prev.get("round", {}).get("score", 0) if round_restarted
+                 else st.get("round", {}).get("score", 0))
+        info = {"score": score,
+                "time_remaining": tr_cur,
                 "reward_parts": parts}
         self._prev = st
         return self._obs(st), reward, done, info
