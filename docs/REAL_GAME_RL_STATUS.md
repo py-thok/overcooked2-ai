@@ -62,29 +62,21 @@ Python (src/bridge/)
 
 ## 未决问题（按优先级）
 
-### 1. 🔴 drive 模式按钮失效（阻塞训练）
+### 1. ✅ 已修复：drive 模式按钮失效（2026-09-20）
 
-现象：训练中厨师移动正常但拾取/切菜按键不生效，25k 步零 shaping 奖励。
+根因：`ILogicalButton.JustPressed()` 单次消费语义，按键事件被读取链上的
+第一个读者消费。修复：`SemanticActions.Interact/ThrowItem` 绕过按钮层，直接发
+`ChefEventMessage(PickUp/Place/Throw)`，目标由游戏自身邻近扫描解析。
+实测：米箱拾取✓ 砧板放置✓ 切菜(use-hold 原始注入)✓ 入锅 shaping 奖励✓。
 
-根因（已定位）：`ILogicalButton.JustPressed()` 是**单次消费语义**（claim），按键事件被
-读取链上的第一个读者消费，真正的拾取逻辑（`Update_Carry`）拿不到。移动不受影响
-（`GetValue()` 是无状态读取）。
+### 2. ✅ 已修复：主菜单直进关卡黑屏（2026-09-20）
 
-修复（已部署未测）：`SemanticActions.Interact/ThrowItem` —— 绕过按钮层，直接调用
-游戏自身的 `ClientMessenger.ChefEventMessage(PickUp/Place/Throw)`，目标由游戏自己的
-邻近扫描（`PlayerControls.CurrentInteractionObjects`）解析。协议命令 `INTERACT/THROW` 已就绪。
-
-**下一步**：重启游戏 → 进故事模式 → 测 `INTERACT` 拾取米饭 → 通过后把 env.py 的
-pickup 动作改为语义动作 → 正式开训。
-
-### 2. 🟡 主菜单直进关卡黑屏（需人工点一次故事模式）
-
-根因（已定位）：绕过大地图/大厅流程时 `AssignChefEntities` 未执行，厨师不生成、
-渲染缺失、回合计时不结算。`ServerKitchenLoader.cs:52` 正常路径会调
-`AssignChefEntities(ServerUserSystem.m_Users)`。
-
-**变通**：每次重启游戏后手动点一次"故事模式"，此后全自动。
-**根治方向**：在 mod 里模拟大厅的用户注册 + 厨师分配流程。
+根因有两层：(a) StartScreen 等待"按任意键"engagement，(b) 无会话时跳过
+`SetupCoopSession` 导致厨师不分配。修复：新增 `ENGAGE` 命令（程序化
+`StartGameownerEngagement` + 反射调 `StartScreenFlow.OnEngagementFinished`），
+LOADLEVEL 无会话时自动复刻故事模式流程（`StartEmptySession(-1)` +
+`SetupCoopSession` + `ServerGameSetup.Mode=Campaign`）。
+实测：全新启动 → ENGAGE → LOADLEVEL → 双厨师生成，全程无人工。
 
 ### 3. 🟢 小项
 
@@ -133,6 +125,6 @@ python src/bridge/record_demos.py --rounds 3 --start 7 --out demos/sushi
 
 ## 路线图
 
-1. **修按钮**（语义动作验证）→ 正式 PPO 开训 ← 当前位置
+1. ~~修按钮（语义动作验证）~~ ✅ → **PPO 训练中**（500k 步 @3x，2026-09-20 启动）← 当前位置
 2. 寿司关冲分（奖励 shaping 调优、投掷利用、DAgger 补强）
 3. 泛化阶段：模拟器网格观测对齐 + A100 CNN 预训练 → 权重迁移
