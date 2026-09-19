@@ -67,6 +67,35 @@ class StateBridgeClient:
         time.sleep(hold_s)
         self.send_action(player=player, **{button: False})
 
+    def reset_level(self):
+        """Restart the current level via the game's own flow."""
+        return self._cmd("RESET") == "OK"
+
+    def set_timescale(self, scale):
+        """Scale game speed (clamped to [0.25, 8] by the mod)."""
+        return self._cmd(f"TIMESCALE {float(scale)}") == "OK"
+
+    def wait_in_round(self, want=True, timeout=60.0, poll=0.5):
+        """Block until the game is in/out of a round."""
+        t0 = time.time()
+        while time.time() - t0 < timeout:
+            try:
+                if bool(self.get_state().get("in_round")) == want:
+                    return True
+            except (OSError, json.JSONDecodeError):
+                self._reconnect()
+            time.sleep(poll)
+        return False
+
+    def _reconnect(self):
+        for _ in range(20):
+            try:
+                self.connect()
+                return
+            except OSError:
+                time.sleep(0.5)
+        raise ConnectionError("state server unreachable")
+
 
 def summarize(st):
     r = st.get("round", {})

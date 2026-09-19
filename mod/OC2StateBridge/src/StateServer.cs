@@ -121,6 +121,16 @@ namespace OC2StateBridge
                             lock (_actionLock) { _pendingActions.Enqueue(line.Substring(7)); }
                             writer.WriteLine("OK");
                         }
+                        else if (line == "RESET")
+                        {
+                            lock (_actionLock) { _pendingActions.Enqueue("@RESET"); }
+                            writer.WriteLine("OK");
+                        }
+                        else if (line.StartsWith("TIMESCALE "))
+                        {
+                            lock (_actionLock) { _pendingActions.Enqueue("@" + line); }
+                            writer.WriteLine("OK");
+                        }
                         else if (line == "PING")
                         {
                             writer.WriteLine("PONG");

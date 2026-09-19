@@ -36,7 +36,7 @@ namespace OC2StateBridge
             _server.PublishState(json);
 
             InputInjector.EnsureHooked(Logger);
-            _server.DrainActions(InputInjector.ApplyAction);
+            _server.DrainActions(DispatchCommand);
 
             if (Input.GetKeyDown(KeyCode.F9))
             {
@@ -44,9 +44,36 @@ namespace OC2StateBridge
             }
         }
 
+        /// <summary>Main-thread dispatch of queued client commands.</summary>
+        private void DispatchCommand(string cmd)
+        {
+            if (cmd == "@RESET")
+            {
+                EnvControl.RestartLevel(Logger);
+            }
+            else if (cmd.StartsWith("@TIMESCALE "))
+            {
+                float scale;
+                if (float.TryParse(cmd.Substring(11),
+                        System.Globalization.NumberStyles.Float,
+                        System.Globalization.CultureInfo.InvariantCulture, out scale))
+                    EnvControl.SetTimeScale(scale, Logger);
+            }
+            else
+            {
+                InputInjector.ApplyAction(cmd);
+            }
+        }
+
         private void OnDestroy()
         {
             if (_server != null) _server.Stop();
+        }
+
+        private void LateUpdate()
+        {
+            // runs after the game's own Update-pass timeScale writes
+            EnvControl.ApplyTimeScale();
         }
     }
 }
