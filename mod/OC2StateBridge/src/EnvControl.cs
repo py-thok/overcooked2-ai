@@ -10,25 +10,34 @@ namespace OC2StateBridge
     public static class EnvControl
     {
         /// <summary>
-        /// Restart the current level through the game's own flow (same path as
-        /// the pause-menu restart: ServerCampaignFlowController sets a flag and
-        /// its GetNextScene reloads the kitchen with a loading screen).
-        /// Returns true if the request was delivered.
+        /// Restart the current level immediately, using the same path as the
+        /// pause-menu restart (InGamePauseMenu.OnRestartConfirmed):
+        /// stop entity synchronisation, then reload the active scene through
+        /// ServerMessenger.LoadLevel. Works mid-round, no outro screen.
         /// </summary>
         public static bool RestartLevel(ManualLogSource log)
         {
-            ServerCampaignFlowController flow = null;
-            try { flow = GameUtils.GetFlowController() as ServerCampaignFlowController; } catch { }
-            if (flow == null)
-                flow = UnityEngine.Object.FindObjectOfType<ServerCampaignFlowController>();
-            if (flow == null)
+            try
             {
-                if (log != null) log.LogWarning("[OC2Bridge] RESET ignored: no campaign flow (not in a level?)");
+                MultiplayerController mc = GameUtils.RequireManager<MultiplayerController>();
+                if (mc != null) mc.StopSynchronisation();
+
+                // ServerMessenger is internal -> invoke via reflection:
+                // LoadLevel(string sceneName, GameState setAtLoadingBegin, bool bUseLoadingScreen, GameState waitForHide)
+                string scene = UnityEngine.SceneManagement.SceneManager.GetActiveScene().name;
+                System.Type t = typeof(GameUtils).Assembly.GetType("ServerMessenger");
+                System.Reflection.MethodInfo m = t.GetMethod("LoadLevel",
+                    System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic,
+                    null, new System.Type[] { typeof(string), typeof(GameState), typeof(bool), typeof(GameState) }, null);
+                m.Invoke(null, new object[] { scene, GameState.LoadKitchen, true, GameState.RunKitchen });
+                if (log != null) log.LogInfo("[OC2Bridge] level restart (LoadLevel) issued");
+                return true;
+            }
+            catch (System.Exception e)
+            {
+                if (log != null) log.LogWarning("[OC2Bridge] RESET failed: " + e.Message);
                 return false;
             }
-            flow.OnLevelRestartRequested();
-            if (log != null) log.LogInfo("[OC2Bridge] level restart requested");
-            return true;
         }
 
         private static float _desiredTimeScale = 1f;
