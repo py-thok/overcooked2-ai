@@ -1,0 +1,165 @@
+"""Reward shaping for the sushi pipeline.
+
+`compute_reward(prev, cur, ctx)` diffs two consecutive bridge states and
+returns (total, parts). `parts` doubles as a metrics channel: keys starting
+with "metric_" are logged but excluded from the reward sum.
+
+All weights live in REWARD_WEIGHTS — tune there, not in the logic.
+"""
+import os
+import sys
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from nav import board_items, nav_targets
+
+REWARD_WEIGHTS = {
+    "score": 0.05,        # per score point (served dish = ~20-40 pts)
+    "pot_add": 0.3,       # ingredient added to pot
+    "pot_start": 0.2,     # cooking started
+    "pot_cooked": 0.3,    # cooking finished
+    "held_ing": 0.05,     # symmetric: +pickup / -putdown (pot_add nets +)
+    "held_utensil": -0.1, # grabbed a pot/extinguisher
+    "held_plate": 0.05,   # symmetric: +took / -put down
+    "chopped": 0.5,       # held item became Chopped*
+    "plated": 0.3,        # held plate gained its first contents
+    "board_add": 0.3,     # raw filling placed on a chopping board
+    "chop_stance": 0.05,  # per step: USE held while facing an occupied board
+    "floor_drop": -0.05,  # ingredient dropped on the floor (anti-churn)
+}
+
+# chop stance gate: must stand within this range and face the board
+_STANCE_MIN_DIST = 0.01
+_STANCE_MAX_DIST = 1.6
+_STANCE_FACING_DOT = 0.5
+# an item below this height after a putdown counts as floor-dropped
+_FLOOR_Y = 0.3
+# look for the dropped item within this radius of the chef
+_DROP_RADIUS = 2.0
+
+
+def held_name(player_state):
+    h = player_state.get("held")
+    return h.get("name") if h else None
+
+
+def is_ingredient(name):
+    # SushiRice, Cucumber, ChoppedCucumber, fish, nori, ... — anything
+    # that is not cookware/tableware
+    return name is not None and not name.startswith(("utensil_", "equipment_"))
+
+
+def find_item_near(items, name, pos, max_dist):
+    if not pos:
+        return None
+    best, best_d = None, max_dist
+    for it in items:
+        if it.get("name") != name or it.get("kind") != "carryable":
+            continue
+        p = it.get("pos")
+        if not p or len(p) < 3:
+            continue
+        d = ((p[0] - pos[0]) ** 2 + (p[2] - pos[2]) ** 2) ** 0.5
+        if d < best_d:
+            best, best_d = it, d
+    return best
+
+
+def nearest_dist(pos, targets):
+    if not pos:
+        return 0.0
+    return min((pos[0] - t[0]) ** 2 + (pos[2] - t[2]) ** 2 for t in targets) ** 0.5
+
+
+def compute_reward(prev, cur, ctx):
+    """Diff two states -> (reward, parts).
+    ctx: {"chop_boards", "plate_station", "crates", "cooker_pos"}
+    (from level_config.get_level + the station census)."""
+    W = REWARD_WEIGHTS
+    parts = {"score": 0.0, "pot_add": 0.0, "pot_start": 0.0, "pot_cooked": 0.0,
+             "held_ing": 0.0, "held_utensil": 0.0, "held_plate": 0.0,
+             "chopped": 0.0, "plated": 0.0, "board_add": 0.0,
+             "chop_stance": 0.0, "floor_drop": 0.0, "nav": 0.0,
+             "metric_pickup_ing": 0.0}
+    pr, cr = prev.get("round", {}), cur.get("round", {})
+    parts["score"] = (cr.get("score", 0) - pr.get("score", 0)) * W["score"]
+    # chopping: raw filling placed on a board
+    prev_boards = board_items(prev.get("items", []), ctx["chop_boards"])
+    cur_boards = board_items(cur.get("items", []), ctx["chop_boards"])
+    prev_board, cur_board = len(prev_boards), len(cur_boards)
+    if cur_board > prev_board:
+        parts["board_add"] += W["board_add"] * (cur_board - prev_board)
+    # pot pipeline (contents added / cooking progressed / cooked)
+    prev_pots = {tuple(c["grid"]): c for c in prev.get("cookers", []) if c.get("grid")}
+    for c in cur.get("cookers", []):
+        if not c.get("grid"):
+            continue
+        p = prev_pots.get(tuple(c["grid"]))
+        if p is None:
+            continue
+        pn = len(p.get("contents") or [])
+        cn = len(c.get("contents") or [])
+        if cn > pn:
+            parts["pot_add"] += W["pot_add"] * (cn - pn)
+        if p["progress"] == 0 and c["progress"] > 0:
+            parts["pot_start"] += W["pot_start"]
+        if not p["is_cooked"] and c["is_cooked"]:
+            parts["pot_cooked"] += W["pot_cooked"]
+    # plates visible this step (they move; recompute every step)
+    plates_pos = [i["pos"] for i in cur.get("items", [])
+                  if i.get("kind") == "plate" and i.get("pos")] or [ctx["plate_station"]]
+    # held-item transitions (symmetric so pick/drop cycling nets 0)
+    pp, cp = prev.get("players", []), cur.get("players", [])
+    for i in range(min(len(pp), len(cp))):
+        ph, ch = pp[i].get("held"), cp[i].get("held")
+        phn = ph.get("name") if ph else None
+        chn = ch.get("name") if ch else None
+        if phn != chn:
+            if chn is not None and is_ingredient(chn):
+                parts["held_ing"] += W["held_ing"]               # picked up an ingredient
+                parts["metric_pickup_ing"] += 1.0                # count (not a reward)
+                if chn.startswith("Chopped") and not (phn or "").startswith("Chopped"):
+                    parts["chopped"] += W["chopped"]             # chopping paid off
+            if phn is not None and is_ingredient(phn) and chn is None:
+                parts["held_ing"] -= W["held_ing"]               # put it down
+                # anti-churn: dropped on the FLOOR (not a station) costs
+                # extra — pick/drop cycling used to net zero
+                it = find_item_near(cur.get("items", []), phn,
+                                    cp[i].get("pos"), _DROP_RADIUS)
+                if it is not None and (it.get("pos") or [0, 1, 0])[1] < _FLOOR_Y:
+                    parts["floor_drop"] += W["floor_drop"]
+            if chn is not None and chn.startswith("utensil_"):
+                parts["held_utensil"] += W["held_utensil"]
+            p_plate = bool(ph and ph.get("is_plate"))
+            c_plate = bool(ch and ch.get("is_plate"))
+            if c_plate and not p_plate:
+                parts["held_plate"] += W["held_plate"]           # took a plate
+            elif p_plate and not c_plate:
+                parts["held_plate"] -= W["held_plate"]           # put the plate down
+        # plating: held plate gains its first contents (rice scooped on)
+        if (ch and ch.get("is_plate") and ch.get("contents")
+                and not (ph and ph.get("is_plate") and ph.get("contents"))):
+            parts["plated"] += W["plated"]
+        # navigation shaping: delta distance to the recipe-relevant target
+        targets, w = nav_targets(ch, cur.get("cookers", []), plates_pos,
+                                 cur_boards, ctx)
+        if targets:
+            d_prev = nearest_dist(pp[i].get("pos"), targets)
+            d_cur = nearest_dist(cp[i].get("pos"), targets)
+            parts["nav"] += w * (d_prev - d_cur)
+        # chopping stance: USE held while FACING a board that has a raw
+        # filling on it — the facing gate kills the stance-farming exploit
+        # (holding use with your back to the board never progresses the
+        # chop but used to pay per-step forever)
+        if cur_board > 0:
+            inp = cp[i].get("input") or {}
+            pos = cp[i].get("pos")
+            fwd = cp[i].get("fwd") or [0.0, 0.0, 1.0]
+            if inp.get("use") and pos:
+                for b in cur_boards:
+                    dx, dz = b[0] - pos[0], b[2] - pos[2]
+                    dist = (dx * dx + dz * dz) ** 0.5
+                    if (_STANCE_MIN_DIST < dist < _STANCE_MAX_DIST
+                            and (fwd[0] * dx + fwd[2] * dz) / dist > _STANCE_FACING_DOT):
+                        parts["chop_stance"] += W["chop_stance"]
+                        break
+    return sum(v for k, v in parts.items() if not k.startswith("metric_")), parts

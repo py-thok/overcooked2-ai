@@ -5,6 +5,8 @@ Loads the BC checkpoint as initialization (same architecture).
 
     python src/bridge/ppo_train.py --bc checkpoints/bc_sushi.pt \
         --timescale 3 --decision-hz 5 --total-steps 500000
+    # parallel game instances (one bridge port per instance):
+    python src/bridge/ppo_train.py --ports 8765 8767 ...
 
 Logs to logs/ppo_sushi/ (tensorboard), checkpoints to checkpoints/ppo_sushi_*.pt
 """
@@ -42,13 +44,154 @@ class ActorCritic(nn.Module):
         print(f"BC weights loaded from {path}")
 
 
-def sample(lm, lb):
-    dm = torch.distributions.Categorical(logits=lm)
-    db = torch.distributions.Categorical(logits=lb)
-    am, ab = dm.sample(), db.sample()
-    logp = dm.log_prob(am) + db.log_prob(ab)
-    ent = dm.entropy() + db.entropy()
-    return am, ab, logp, ent
+def batch_obs(obs, dev):
+    """Stack per-env obs into one forward batch over all agents of all
+    instances; rows ordered env-major: [env0 p0, env0 p1, env1 p0, ...]"""
+    N = len(obs)
+    grid_np = np.stack([obs[i]["grid"] for i in range(N) for _ in range(2)])
+    glob_np = np.stack([obs[i]["globals"][p] for i in range(N) for p in range(2)])
+    return (grid_np, glob_np,
+            torch.tensor(grid_np, dtype=torch.float32, device=dev),
+            torch.tensor(glob_np, dtype=torch.float32, device=dev))
+
+
+def collect_rollout(model, envs, args, dev, writer, gs, ep_scores):
+    """Run args.rollout steps on every env. Buffers are (T, 2N agents) so
+    GAE runs per agent along time. Returns (batch, obs, parts_sum, gs)."""
+    N = len(envs)
+    NA = 2 * N
+    G, Gl = [], []          # per (t, agent): obs
+    AM, AB = [], []         # actions
+    LP = np.zeros((0, NA), np.float32)
+    V = np.zeros((0, NA), np.float32)
+    R = np.zeros((0, NA), np.float32)
+    D = np.zeros((0, NA), np.float32)
+    parts_sum = {}
+    ep_ret = [0.0] * N
+    ep_len = [0] * N
+
+    obs = [e._obs(e._prev) if e._prev else e.reset() for e in envs]
+    for _t in range(args.rollout):
+        grid_np, glob_np, tG, tL = batch_obs(obs, dev)
+        with torch.no_grad():
+            lm, lb, v = model(tG, tL)
+        dm = torch.distributions.Categorical(logits=lm)
+        db = torch.distributions.Categorical(logits=lb)
+        am, ab = dm.sample(), db.sample()
+        logp = dm.log_prob(am) + db.log_prob(ab)
+        am_l, ab_l = am.tolist(), ab.tolist()
+        acts = [am_l[r] * 4 + ab_l[r] for r in range(NA)]
+
+        # overlap the per-step sleeps: apply everywhere first
+        for i, e in enumerate(envs):
+            e.apply((acts[2 * i], acts[2 * i + 1]))
+        results = [e.collect() for e in envs]
+
+        G.extend(grid_np); Gl.extend(glob_np)
+        AM.append([a // 4 for a in acts]); AB.append([a % 4 for a in acts])
+        LP = np.vstack([LP, [logp.tolist()]])
+        V = np.vstack([V, [v.tolist()]])
+        R = np.vstack([R, [[results[i][1] for i in range(N)
+                           for _ in range(2)]]])
+        D = np.vstack([D, [[float(results[i][2]) for i in range(N)
+                            for _ in range(2)]]])
+
+        for i, (obs2, r, done, info) in enumerate(results):
+            for k, vv in info.get("reward_parts", {}).items():
+                parts_sum[k] = parts_sum.get(k, 0.0) + vv
+            ep_ret[i] += r; ep_len[i] += 1
+            if done:
+                ep_scores.append(info["score"])
+                writer.add_scalar("episode/score", info["score"], gs)
+                writer.add_scalar("episode/return_shaped", ep_ret[i], gs)
+                writer.add_scalar("episode/length", ep_len[i], gs)
+                writer.add_scalar("episode/time_remaining",
+                                  info["time_remaining"], gs)
+                print(f"[{gs}] env{i} episode done: score={info['score']} "
+                      f"(last5 avg={np.mean(ep_scores[-5:]):.0f})")
+                ep_ret[i], ep_len[i] = 0.0, 0
+                obs[i] = envs[i].reset()
+            else:
+                obs[i] = obs2
+        gs += NA
+
+    batch = {"G": np.stack(G), "Gl": np.stack(Gl),
+             "AM": np.array(AM).reshape(-1), "AB": np.array(AB).reshape(-1),
+             "LP": LP.reshape(-1), "V": V, "R": R, "D": D}
+    return batch, obs, parts_sum, gs
+
+
+def compute_gae(model, batch, obs, args, dev):
+    """GAE per agent column. Returns flat (adv, ret, v_old)."""
+    N = len(obs)
+    NA = 2 * N
+    V, R, D = batch["V"], batch["R"], batch["D"]
+    T = V.shape[0]
+    adv = np.zeros((T, NA), np.float32)
+    # bootstrap values for non-terminal rollout tails (batched)
+    _, _, tG, tL = batch_obs(obs, dev)
+    with torch.no_grad():
+        _, _, nv = model(tG, tL)
+    next_vs = nv.tolist()
+    for a in range(NA):
+        next_v = 0.0 if D[-1, a] else next_vs[a]
+        lastgae = 0.0
+        for t in reversed(range(T)):
+            nv_a = next_v if t == T - 1 else V[t + 1, a]
+            nonterminal = 1.0 - D[t, a]
+            delta = R[t, a] + args.gamma * nv_a * nonterminal - V[t, a]
+            lastgae = delta + args.gamma * args.lam * nonterminal * lastgae
+            adv[t, a] = lastgae
+    ret = adv + V
+    return adv.reshape(-1), ret.reshape(-1), V.reshape(-1)
+
+
+def ppo_update(model, opt, batch, adv_f, ret_f, args, dev):
+    """Clipped PPO epochs over the flattened batch. Returns log metrics."""
+    tG = torch.tensor(batch["G"], dtype=torch.float32, device=dev)
+    tL = torch.tensor(batch["Gl"], dtype=torch.float32, device=dev)
+    tAM = torch.tensor(batch["AM"], dtype=torch.long, device=dev)
+    tAB = torch.tensor(batch["AB"], dtype=torch.long, device=dev)
+    tLP = torch.tensor(batch["LP"], dtype=torch.float32, device=dev)
+    tR = torch.tensor(ret_f, dtype=torch.float32, device=dev)
+    tA = torch.tensor(adv_f, dtype=torch.float32, device=dev)
+    tA = (tA - tA.mean()) / (tA.std() + 1e-8)
+
+    B = len(tAM)
+    idx = np.arange(B)
+    approx_kl = clipfrac = 0.0
+    pi_loss = v_loss = ent = None
+    for _ in range(args.epochs):
+        np.random.shuffle(idx)
+        for s in range(0, B, args.minibatch):
+            b = idx[s:s + args.minibatch]
+            lm, lb, v = model(tG[b], tL[b])
+            dm = torch.distributions.Categorical(logits=lm)
+            db = torch.distributions.Categorical(logits=lb)
+            logp = dm.log_prob(tAM[b]) + db.log_prob(tAB[b])
+            logratio = logp - tLP[b]
+            ratio = torch.exp(logratio)
+            s1 = ratio * tA[b]
+            s2 = torch.clamp(ratio, 1 - args.clip, 1 + args.clip) * tA[b]
+            pi_loss = -torch.min(s1, s2).mean()
+            v_loss = ((v - tR[b]) ** 2).mean()
+            ent = (dm.entropy() + db.entropy()).mean()
+            loss = pi_loss + args.vf * v_loss - args.ent * ent
+            opt.zero_grad(); loss.backward()
+            nn.utils.clip_grad_norm_(model.parameters(), 0.5)
+            opt.step()
+            approx_kl = float((-logratio).mean().item())
+            clipfrac = float((torch.abs(ratio - 1) > args.clip).float().mean().item())
+    # explained variance of the value function
+    ev = float(1 - np.var(ret_f - batch["V"].reshape(-1)) / (np.var(ret_f) + 1e-8))
+    return {"pi_loss": pi_loss.item(), "v_loss": v_loss.item(),
+            "entropy": ent.item(), "approx_kl": approx_kl,
+            "clipfrac": clipfrac, "explained_var": ev}
+
+
+def save_ckpt(model, grid_shape, g_dim, path):
+    torch.save({"state_dict": model.state_dict(),
+                "grid_shape": list(grid_shape), "g_dim": g_dim}, path)
 
 
 def main():
@@ -77,7 +220,6 @@ def main():
     envs = [OC2Env(args.scene, decision_hz=args.decision_hz,
                    timescale=args.timescale, port=p) for p in args.ports]
     N = len(envs)          # parallel game instances
-    NA = 2 * N             # agent columns per step (2 chefs per instance)
 
     # probe obs dims
     obs = [e.reset() for e in envs]
@@ -102,158 +244,30 @@ def main():
     t_start = time.time()
     try:
         while gs < args.total_steps:
-            # ---------------- rollout ----------------
-            # buffers are (T_steps, 2N agents) so GAE runs per agent along time
-            G, Gl = [], []          # per (t, agent): obs
-            AM, AB = [], []         # actions
-            LP = np.zeros((0, NA), np.float32)
-            V = np.zeros((0, NA), np.float32)
-            R = np.zeros((0, NA), np.float32)
-            D = np.zeros((0, NA), np.float32)
-            parts_sum = {}
-            ep_ret = [0.0] * N
-            ep_len = [0] * N
-
-            obs = [e._obs(e._prev) if e._prev else e.reset() for e in envs]
-            for _t in range(args.rollout):
-                # one batched forward over all agents of all instances;
-                # rows ordered env-major: [env0 p0, env0 p1, env1 p0, ...]
-                grid_np = np.stack([obs[i]["grid"] for i in range(N)
-                                    for _ in range(2)])
-                glob_np = np.stack([obs[i]["globals"][p] for i in range(N)
-                                    for p in range(2)])
-                with torch.no_grad():
-                    lm, lb, v = model(
-                        torch.tensor(grid_np, dtype=torch.float32, device=dev),
-                        torch.tensor(glob_np, dtype=torch.float32, device=dev))
-                dm = torch.distributions.Categorical(logits=lm)
-                db = torch.distributions.Categorical(logits=lb)
-                am, ab = dm.sample(), db.sample()
-                logp = dm.log_prob(am) + db.log_prob(ab)
-                am_l, ab_l = am.tolist(), ab.tolist()
-                acts = [am_l[r] * 4 + ab_l[r] for r in range(NA)]
-
-                # overlap the per-step sleeps: apply everywhere first
-                for i, e in enumerate(envs):
-                    e.apply((acts[2 * i], acts[2 * i + 1]))
-                results = [e.collect() for e in envs]
-
-                G.extend(grid_np); Gl.extend(glob_np)
-                AM.append([a // 4 for a in acts]); AB.append([a % 4 for a in acts])
-                LP = np.vstack([LP, [logp.tolist()]])
-                V = np.vstack([V, [v.tolist()]])
-                R = np.vstack([R, [[results[i][1]] * 2 for i in range(N)]])
-                D = np.vstack([D, [[float(results[i][2])] * 2 for i in range(N)]])
-
-                for i, (obs2, r, done, info) in enumerate(results):
-                    for k, vv in info.get("reward_parts", {}).items():
-                        parts_sum[k] = parts_sum.get(k, 0.0) + vv
-                    ep_ret[i] += r; ep_len[i] += 1
-                    if done:
-                        ep_scores.append(info["score"])
-                        writer.add_scalar("episode/score", info["score"], gs)
-                        writer.add_scalar("episode/return_shaped", ep_ret[i], gs)
-                        writer.add_scalar("episode/length", ep_len[i], gs)
-                        writer.add_scalar("episode/time_remaining",
-                                          info["time_remaining"], gs)
-                        print(f"[{gs}] env{i} episode done: score={info['score']} "
-                              f"(last5 avg={np.mean(ep_scores[-5:]):.0f})")
-                        ep_ret[i], ep_len[i] = 0.0, 0
-                        obs[i] = envs[i].reset()
-                    else:
-                        obs[i] = obs2
-                gs += NA
-
-            # ---------------- GAE per agent ----------------
-            T = V.shape[0]
-            adv = np.zeros((T, NA), np.float32)
-            # bootstrap values for non-terminal rollout tails (batched)
-            with torch.no_grad():
-                grid_np = np.stack([obs[i]["grid"] for i in range(N)
-                                    for _ in range(2)])
-                glob_np = np.stack([obs[i]["globals"][p] for i in range(N)
-                                    for p in range(2)])
-                _, _, nv = model(
-                    torch.tensor(grid_np, dtype=torch.float32, device=dev),
-                    torch.tensor(glob_np, dtype=torch.float32, device=dev))
-                next_vs = nv.tolist()
-            for a in range(NA):
-                next_v = 0.0 if D[-1, a] else next_vs[a]
-                lastgae = 0.0
-                for t in reversed(range(T)):
-                    nv_a = next_v if t == T - 1 else V[t + 1, a]
-                    nonterminal = 1.0 - D[t, a]
-                    delta = R[t, a] + args.gamma * nv_a * nonterminal - V[t, a]
-                    lastgae = delta + args.gamma * args.lam * nonterminal * lastgae
-                    adv[t, a] = lastgae
-            ret = adv + V
-
-            # flatten (T,NA) -> (NA*T,)
-            G = np.stack(G); Gl = np.stack(Gl)
-            AMf = np.array(AM).reshape(-1); ABf = np.array(AB).reshape(-1)
-            LPf = LP.reshape(-1); ADVf = adv.reshape(-1); RETf = ret.reshape(-1)
-            tG = torch.tensor(G, dtype=torch.float32, device=dev)
-            tL = torch.tensor(Gl, dtype=torch.float32, device=dev)
-            tAM = torch.tensor(AMf, dtype=torch.long, device=dev)
-            tAB = torch.tensor(ABf, dtype=torch.long, device=dev)
-            tLP = torch.tensor(LPf, dtype=torch.float32, device=dev)
-            tA = torch.tensor(ADVf, dtype=torch.float32, device=dev)
-            tR = torch.tensor(RETf, dtype=torch.float32, device=dev)
-            tA = (tA - tA.mean()) / (tA.std() + 1e-8)
-
-            # ---------------- PPO update ----------------
-            B = len(AMf)
-            idx = np.arange(B)
-            approx_kl = clipfrac = 0.0
-            for _ in range(args.epochs):
-                np.random.shuffle(idx)
-                for s in range(0, B, args.minibatch):
-                    b = idx[s:s + args.minibatch]
-                    lm, lb, v = model(tG[b], tL[b])
-                    dm = torch.distributions.Categorical(logits=lm)
-                    db = torch.distributions.Categorical(logits=lb)
-                    logp = dm.log_prob(tAM[b]) + db.log_prob(tAB[b])
-                    logratio = logp - tLP[b]
-                    ratio = torch.exp(logratio)
-                    s1 = ratio * tA[b]
-                    s2 = torch.clamp(ratio, 1 - args.clip, 1 + args.clip) * tA[b]
-                    pi_loss = -torch.min(s1, s2).mean()
-                    v_loss = ((v - tR[b]) ** 2).mean()
-                    ent = (dm.entropy() + db.entropy()).mean()
-                    loss = pi_loss + args.vf * v_loss - args.ent * ent
-                    opt.zero_grad(); loss.backward()
-                    nn.utils.clip_grad_norm_(model.parameters(), 0.5)
-                    opt.step()
-                    approx_kl = float((-logratio).mean().item())
-                    clipfrac = float((torch.abs(ratio - 1) > args.clip).float().mean().item())
-
-            # explained variance of the value function
-            ev = float(1 - np.var(RETf - V.reshape(-1)) / (np.var(RETf) + 1e-8))
+            batch, obs, parts_sum, gs = collect_rollout(
+                model, envs, args, dev, writer, gs, ep_scores)
+            adv_f, ret_f, _ = compute_gae(model, batch, obs, args, dev)
+            metrics = ppo_update(model, opt, batch, adv_f, ret_f, args, dev)
 
             update += 1
             sps = gs / max(time.time() - t_start, 1)
-            writer.add_scalar("train/pi_loss", pi_loss.item(), gs)
-            writer.add_scalar("train/v_loss", v_loss.item(), gs)
-            writer.add_scalar("train/entropy", ent.item(), gs)
-            writer.add_scalar("train/approx_kl", approx_kl, gs)
-            writer.add_scalar("train/clipfrac", clipfrac, gs)
-            writer.add_scalar("train/explained_var", ev, gs)
+            for k, v in metrics.items():
+                writer.add_scalar(f"train/{k}", v, gs)
             writer.add_scalar("perf/sps", sps, gs)
             for k, vv in parts_sum.items():
                 writer.add_scalar(f"reward/{k}", vv, gs)
             if update % args.save_every == 0:
                 path = f"checkpoints/ppo_sushi_{gs}.pt"
-                torch.save({"state_dict": model.state_dict(),
-                            "grid_shape": list(grid_shape), "g_dim": g_dim}, path)
+                save_ckpt(model, grid_shape, g_dim, path)
                 print(f"saved {path}")
             print(f"[{gs}/{args.total_steps}] update {update} done, "
-                  f"pi={pi_loss.item():+.3f} v={v_loss.item():.3f} ent={ent.item():.3f} "
-                  f"kl={approx_kl:.4f} ev={ev:.2f} ({sps:.0f} trans/s)")
+                  f"pi={metrics['pi_loss']:+.3f} v={metrics['v_loss']:.3f} "
+                  f"ent={metrics['entropy']:.3f} kl={metrics['approx_kl']:.4f} "
+                  f"ev={metrics['explained_var']:.2f} ({sps:.0f} trans/s)")
     except KeyboardInterrupt:
         print("\ninterrupted")
     finally:
-        torch.save({"state_dict": model.state_dict(),
-                    "grid_shape": list(grid_shape), "g_dim": g_dim}, "checkpoints/ppo_sushi_final.pt")
+        save_ckpt(model, grid_shape, g_dim, "checkpoints/ppo_sushi_final.pt")
         for e in envs:
             try:
                 e.close()
