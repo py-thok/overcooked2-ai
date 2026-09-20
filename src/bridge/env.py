@@ -48,6 +48,7 @@ class OC2Env:
         self._prev = None
         self._steps = 0
         self._btn_held = [{}, {}]  # per player: buttons currently held down
+        self._interact_ready = [0.0, 0.0]  # wall-clock when INTERACT next allowed
 
     # ------------------------------------------------------------------
     def reset(self):
@@ -74,9 +75,31 @@ class OC2Env:
         self.cli.set_mode("drive")
         self._enc = ObsEncoder(self.cli.get_stations())
         self._release_all()
+        self._interact_ready = [0.0, 0.0]
         self._steps = 0
+        self._curriculum_spawn()
         self._prev = self.cli.get_state()
         return self._obs(self._prev)
+
+    def _curriculum_spawn(self):
+        """Place the chefs at useful starting spots facing their first
+        station: P0 before the rice crate (8.4,-2.4), P1 before the chopping
+        board (15.6,-2.4). Exposes the policy to the first link of the
+        pipeline every round instead of hoping random walks find crates."""
+        spots = [(8.4, -3.6), (15.6, -3.7)]
+        for p, (x, z) in enumerate(spots):
+            self.cli.set_player_pos(x, 0, z, player=p)
+        time.sleep(0.25)
+        players = self.cli.get_state().get("players", [])
+        for p in range(2):
+            sign = (1, 1)
+            if p < len(players) and players[p].get("move_sign"):
+                sign = players[p]["move_sign"]
+            # face north (world +z): input y = -sign1
+            self.cli.send_action(player=p, move=(0.0, -1.0 * sign[1]))
+        time.sleep(0.25)
+        for p in range(2):
+            self.cli.send_action(player=p, move=(0.0, 0.0))
 
     def step(self, actions):
         t0 = time.time()
@@ -202,8 +225,14 @@ class OC2Env:
         name = BTN_NAMES[btn]
         if name == "pickup":
             # semantic pickup/place via the game's own interaction events —
-            # raw button taps race the JustPressed claim chain and get lost
-            self.cli.interact(player)
+            # raw button taps race the JustPressed claim chain and get lost.
+            # Cooldown: the pickup result reaches our state ~0.6s after the
+            # command; without it a policy spamming pickup cancels its own
+            # pickups by placing the item right back before it ever sees it.
+            now = time.time()
+            if now >= self._interact_ready[player]:
+                self.cli.interact(player)
+                self._interact_ready[player] = now + 0.7
         elif name == "dash":
             self.cli.send_action(player=player, dash=True)  # tap: released next step
             held["dash"] = True
