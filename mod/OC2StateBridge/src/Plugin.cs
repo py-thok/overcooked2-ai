@@ -24,8 +24,13 @@ namespace OC2StateBridge
 
         private void Awake()
         {
-            Logger.LogInfo("[OC2Bridge] awake, starting state server on 127.0.0.1:8765");
-            _server = new StateServer(8765, Logger);
+            // Port override lets a second game instance run its own bridge
+            // (parallel RL): OC2BRIDGE_PORT=8766 Overcooked2.exe
+            int port = 8765;
+            string envPort = System.Environment.GetEnvironmentVariable("OC2BRIDGE_PORT");
+            if (!string.IsNullOrEmpty(envPort)) int.TryParse(envPort, out port);
+            Logger.LogInfo("[OC2Bridge] awake, starting state server on 127.0.0.1:" + port);
+            _server = new StateServer(port, Logger);
             _server.Start();
         }
 

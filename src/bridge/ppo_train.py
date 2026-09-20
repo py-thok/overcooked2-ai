@@ -70,15 +70,20 @@ def main():
     ap.add_argument("--log-dir", default="logs/ppo_sushi")
     ap.add_argument("--save-every", type=int, default=20)
     ap.add_argument("--resume", default=None, help="PPO checkpoint to resume from")
+    ap.add_argument("--ports", type=int, nargs="+", default=[8765],
+                    help="bridge ports — one per parallel game instance")
     args = ap.parse_args()
 
-    env = OC2Env(args.scene, decision_hz=args.decision_hz, timescale=args.timescale)
+    envs = [OC2Env(args.scene, decision_hz=args.decision_hz,
+                   timescale=args.timescale, port=p) for p in args.ports]
+    N = len(envs)          # parallel game instances
+    NA = 2 * N             # agent columns per step (2 chefs per instance)
 
     # probe obs dims
-    obs = env.reset()
-    grid_shape = obs["grid"].shape
-    g_dim = obs["globals"][0].shape[0]
-    print(f"obs grid={grid_shape} globals={g_dim}")
+    obs = [e.reset() for e in envs]
+    grid_shape = obs[0]["grid"].shape
+    g_dim = obs[0]["globals"][0].shape[0]
+    print(f"obs grid={grid_shape} globals={g_dim} instances={N}")
 
     dev = "cuda" if torch.cuda.is_available() else "cpu"
     model = ActorCritic(grid_shape, g_dim).to(dev)
@@ -98,73 +103,92 @@ def main():
     try:
         while gs < args.total_steps:
             # ---------------- rollout ----------------
-            # buffers are (T_steps, 2 agents) so GAE runs per agent along time
+            # buffers are (T_steps, 2N agents) so GAE runs per agent along time
             G, Gl = [], []          # per (t, agent): obs
             AM, AB = [], []         # actions
-            LP = np.zeros((0, 2), np.float32)
-            V = np.zeros((0, 2), np.float32)
-            R = np.zeros((0, 2), np.float32)
-            D = np.zeros((0, 2), np.float32)
+            LP = np.zeros((0, NA), np.float32)
+            V = np.zeros((0, NA), np.float32)
+            R = np.zeros((0, NA), np.float32)
+            D = np.zeros((0, NA), np.float32)
             parts_sum = {}
-            ep_ret, ep_len = 0.0, 0
+            ep_ret = [0.0] * N
+            ep_len = [0] * N
 
-            obs = env._obs(env._prev) if env._prev else env.reset()
+            obs = [e._obs(e._prev) if e._prev else e.reset() for e in envs]
             for _t in range(args.rollout):
-                grid_np = obs["grid"]
-                grid = torch.tensor(grid_np, dtype=torch.float32, device=dev).unsqueeze(0)
-                acts, vals, logps = [], [], []
-                for p in range(2):
-                    gp = obs["globals"][p]
-                    g = torch.tensor(gp, dtype=torch.float32, device=dev).unsqueeze(0)
-                    with torch.no_grad():
-                        lm, lb, v = model(grid, g)
-                    am, ab, logp, ent = sample(lm, lb)
-                    acts.append(int(am.item()) * 4 + int(ab.item()))
-                    vals.append(float(v.item()))
-                    logps.append(float(logp.item()))
-                    G.append(grid_np); Gl.append(gp)
-                obs2, r, done, info = env.step(tuple(acts))
-                for k, vv in info.get("reward_parts", {}).items():
-                    parts_sum[k] = parts_sum.get(k, 0.0) + vv
-                ep_ret += r; ep_len += 1
+                # one batched forward over all agents of all instances;
+                # rows ordered env-major: [env0 p0, env0 p1, env1 p0, ...]
+                grid_np = np.stack([obs[i]["grid"] for i in range(N)
+                                    for _ in range(2)])
+                glob_np = np.stack([obs[i]["globals"][p] for i in range(N)
+                                    for p in range(2)])
+                with torch.no_grad():
+                    lm, lb, v = model(
+                        torch.tensor(grid_np, dtype=torch.float32, device=dev),
+                        torch.tensor(glob_np, dtype=torch.float32, device=dev))
+                dm = torch.distributions.Categorical(logits=lm)
+                db = torch.distributions.Categorical(logits=lb)
+                am, ab = dm.sample(), db.sample()
+                logp = dm.log_prob(am) + db.log_prob(ab)
+                am_l, ab_l = am.tolist(), ab.tolist()
+                acts = [am_l[r] * 4 + ab_l[r] for r in range(NA)]
+
+                # overlap the per-step sleeps: apply everywhere first
+                for i, e in enumerate(envs):
+                    e.apply((acts[2 * i], acts[2 * i + 1]))
+                results = [e.collect() for e in envs]
+
+                G.extend(grid_np); Gl.extend(glob_np)
                 AM.append([a // 4 for a in acts]); AB.append([a % 4 for a in acts])
-                LP = np.vstack([LP, [logps]]); V = np.vstack([V, [vals]])
-                R = np.vstack([R, [[r, r]]]); D = np.vstack([D, [[done, done]]])
-                obs = obs2
-                gs += 2
-                if done:
-                    ep_scores.append(info["score"])
-                    writer.add_scalar("episode/score", info["score"], gs)
-                    writer.add_scalar("episode/return_shaped", ep_ret, gs)
-                    writer.add_scalar("episode/length", ep_len, gs)
-                    writer.add_scalar("episode/time_remaining", info["time_remaining"], gs)
-                    print(f"[{gs}] episode done: score={info['score']} "
-                          f"(last5 avg={np.mean(ep_scores[-5:]):.0f})")
-                    ep_ret, ep_len = 0.0, 0
-                    obs = env.reset()
+                LP = np.vstack([LP, [logp.tolist()]])
+                V = np.vstack([V, [v.tolist()]])
+                R = np.vstack([R, [[results[i][1]] * 2 for i in range(N)]])
+                D = np.vstack([D, [[float(results[i][2])] * 2 for i in range(N)]])
+
+                for i, (obs2, r, done, info) in enumerate(results):
+                    for k, vv in info.get("reward_parts", {}).items():
+                        parts_sum[k] = parts_sum.get(k, 0.0) + vv
+                    ep_ret[i] += r; ep_len[i] += 1
+                    if done:
+                        ep_scores.append(info["score"])
+                        writer.add_scalar("episode/score", info["score"], gs)
+                        writer.add_scalar("episode/return_shaped", ep_ret[i], gs)
+                        writer.add_scalar("episode/length", ep_len[i], gs)
+                        writer.add_scalar("episode/time_remaining",
+                                          info["time_remaining"], gs)
+                        print(f"[{gs}] env{i} episode done: score={info['score']} "
+                              f"(last5 avg={np.mean(ep_scores[-5:]):.0f})")
+                        ep_ret[i], ep_len[i] = 0.0, 0
+                        obs[i] = envs[i].reset()
+                    else:
+                        obs[i] = obs2
+                gs += NA
 
             # ---------------- GAE per agent ----------------
             T = V.shape[0]
-            adv = np.zeros((T, 2), np.float32)
-            for p in range(2):
-                if D[-1, p]:
-                    next_v = 0.0
-                else:
-                    with torch.no_grad():
-                        grid = torch.tensor(obs["grid"], dtype=torch.float32, device=dev).unsqueeze(0)
-                        g = torch.tensor(obs["globals"][p], dtype=torch.float32, device=dev).unsqueeze(0)
-                        _, _, nv = model(grid, g)
-                        next_v = float(nv.item())
+            adv = np.zeros((T, NA), np.float32)
+            # bootstrap values for non-terminal rollout tails (batched)
+            with torch.no_grad():
+                grid_np = np.stack([obs[i]["grid"] for i in range(N)
+                                    for _ in range(2)])
+                glob_np = np.stack([obs[i]["globals"][p] for i in range(N)
+                                    for p in range(2)])
+                _, _, nv = model(
+                    torch.tensor(grid_np, dtype=torch.float32, device=dev),
+                    torch.tensor(glob_np, dtype=torch.float32, device=dev))
+                next_vs = nv.tolist()
+            for a in range(NA):
+                next_v = 0.0 if D[-1, a] else next_vs[a]
                 lastgae = 0.0
                 for t in reversed(range(T)):
-                    nv = next_v if t == T - 1 else V[t + 1, p]
-                    nonterminal = 1.0 - D[t, p]
-                    delta = R[t, p] + args.gamma * nv * nonterminal - V[t, p]
+                    nv_a = next_v if t == T - 1 else V[t + 1, a]
+                    nonterminal = 1.0 - D[t, a]
+                    delta = R[t, a] + args.gamma * nv_a * nonterminal - V[t, a]
                     lastgae = delta + args.gamma * args.lam * nonterminal * lastgae
-                    adv[t, p] = lastgae
+                    adv[t, a] = lastgae
             ret = adv + V
 
-            # flatten (T,2) -> (2T,)
+            # flatten (T,NA) -> (NA*T,)
             G = np.stack(G); Gl = np.stack(Gl)
             AMf = np.array(AM).reshape(-1); ABf = np.array(AB).reshape(-1)
             LPf = LP.reshape(-1); ADVf = adv.reshape(-1); RETf = ret.reshape(-1)
@@ -178,12 +202,12 @@ def main():
             tA = (tA - tA.mean()) / (tA.std() + 1e-8)
 
             # ---------------- PPO update ----------------
-            N = len(AMf)
-            idx = np.arange(N)
+            B = len(AMf)
+            idx = np.arange(B)
             approx_kl = clipfrac = 0.0
             for _ in range(args.epochs):
                 np.random.shuffle(idx)
-                for s in range(0, N, args.minibatch):
+                for s in range(0, B, args.minibatch):
                     b = idx[s:s + args.minibatch]
                     lm, lb, v = model(tG[b], tL[b])
                     dm = torch.distributions.Categorical(logits=lm)
@@ -230,7 +254,11 @@ def main():
     finally:
         torch.save({"state_dict": model.state_dict(),
                     "grid_shape": list(grid_shape), "g_dim": g_dim}, "checkpoints/ppo_sushi_final.pt")
-        env.close()
+        for e in envs:
+            try:
+                e.close()
+            except Exception:
+                pass
         writer.close()
         print("saved checkpoints/ppo_sushi_final.pt")
 

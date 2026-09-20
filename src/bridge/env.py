@@ -37,13 +37,13 @@ BTN_NAMES = {0: None, 1: "pickup", 2: "use", 3: "dash"}
 
 class OC2Env:
     def __init__(self, scene="s_sushi_1_4", decision_hz=5.0, timescale=1.0,
-                 time_limit=210.0, max_steps=2000):
+                 time_limit=210.0, max_steps=2000, port=8765):
         self.scene = scene
         self.hz = decision_hz
         self.timescale = timescale
         self.time_limit = time_limit
         self.max_steps = max_steps
-        self.cli = StateBridgeClient().connect()
+        self.cli = StateBridgeClient(port=port).connect()
         self._enc = None
         self._prev = None
         self._steps = 0
@@ -106,11 +106,20 @@ class OC2Env:
             self.cli.send_action(player=p, move=(0.0, 0.0))
 
     def step(self, actions):
-        t0 = time.time()
+        self.apply(actions)
+        return self.collect()
+
+    def apply(self, actions):
+        """Send actions to both chefs (no waiting). Vectorized trainers call
+        apply() on every env first, then collect() on every env — the
+        per-step sleeps overlap across game instances."""
+        self._step_t0 = time.time()
         for p in range(2):
             self._apply_action(p, int(actions[p]))
 
-        # wait one decision period (wall clock accounts for timescale)
+    def collect(self):
+        """Wait out the decision period, read state, compute reward/done."""
+        t0 = getattr(self, "_step_t0", time.time())
         dt = (1.0 / self.hz) / max(self.timescale, 0.25)
         time.sleep(max(0.0, dt - (time.time() - t0)))
 
@@ -329,7 +338,7 @@ class OC2Env:
         parts = {"score": 0.0, "pot_add": 0.0, "pot_start": 0.0, "pot_cooked": 0.0,
                  "held_ing": 0.0, "held_utensil": 0.0, "held_plate": 0.0,
                  "chopped": 0.0, "plated": 0.0, "board_add": 0.0,
-                 "chop_stance": 0.0, "nav": 0.0,
+                 "chop_stance": 0.0, "floor_drop": 0.0, "nav": 0.0,
                  "metric_pickup_ing": 0.0}
         pr, cr = prev.get("round", {}), cur.get("round", {})
         parts["score"] = (cr.get("score", 0) - pr.get("score", 0)) / 20.0
@@ -372,6 +381,12 @@ class OC2Env:
                         parts["chopped"] += 0.2                  # chopping paid off
                 if phn is not None and self._is_ingredient(phn) and chn is None:
                     parts["held_ing"] -= 0.05                    # put it down (pot_add nets +)
+                    # anti-churn: dropped on the FLOOR (not a station) costs
+                    # extra — pick/drop cycling used to net zero
+                    it = self._find_item_near(cur.get("items", []), phn,
+                                              cp[i].get("pos"), 2.0)
+                    if it is not None and (it.get("pos") or [0, 1, 0])[1] < 0.3:
+                        parts["floor_drop"] -= 0.05
                 if chn is not None and chn.startswith("utensil_"):
                     parts["held_utensil"] -= 0.1                 # grabbed a pot/extinguisher
                 p_plate = bool(ph and ph.get("is_plate"))
@@ -391,17 +406,38 @@ class OC2Env:
                 d_prev = self._nearest_dist(pp[i].get("pos"), targets)
                 d_cur = self._nearest_dist(cp[i].get("pos"), targets)
                 parts["nav"] += w * (d_prev - d_cur)
-            # chopping stance: USE held next to a board that has a raw
-            # filling on it — reinforces the actual chopping posture
+            # chopping stance: USE held while FACING a board that has a raw
+            # filling on it — the facing gate kills the stance-farming exploit
+            # (holding use with your back to the board never progresses the
+            # chop but used to pay +0.02/step forever)
             if cur_board > 0:
                 inp = cp[i].get("input") or {}
                 pos = cp[i].get("pos")
+                fwd = cp[i].get("fwd") or [0.0, 0.0, 1.0]
                 if inp.get("use") and pos:
-                    for b in self.CHOP_BOARDS:
-                        if abs(pos[0] - b[0]) < 1.6 and abs(pos[2] - b[2]) < 1.6:
+                    for b in cur_boards:
+                        dx, dz = b[0] - pos[0], b[2] - pos[2]
+                        dist = (dx * dx + dz * dz) ** 0.5
+                        if 0.01 < dist < 1.6 and (fwd[0] * dx + fwd[2] * dz) / dist > 0.5:
                             parts["chop_stance"] += 0.02
                             break
         return sum(v for k, v in parts.items() if not k.startswith("metric_")), parts
+
+    @staticmethod
+    def _find_item_near(items, name, pos, max_dist):
+        if not pos:
+            return None
+        best, best_d = None, max_dist
+        for it in items:
+            if it.get("name") != name or it.get("kind") != "carryable":
+                continue
+            p = it.get("pos")
+            if not p or len(p) < 3:
+                continue
+            d = ((p[0] - pos[0]) ** 2 + (p[2] - pos[2]) ** 2) ** 0.5
+            if d < best_d:
+                best, best_d = it, d
+        return best
 
     @staticmethod
     def _nearest_dist(pos, targets):
