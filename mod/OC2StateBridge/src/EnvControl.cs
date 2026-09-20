@@ -132,6 +132,32 @@ namespace OC2StateBridge
             return true;
         }
 
+        private static string _pendingScene;
+        private static float _pendingNextTry;
+        private static int _pendingTries;
+
+        /// <summary>Deferred LOADLEVEL retry, driven from Plugin.Update.
+        /// Covers the fresh-boot race where the frontend flow does not exist
+        /// yet (bootstrap fails) or a bare load collapses back to StartScreen.
+        /// Re-engages when the pad user was lost along the way.</summary>
+        public static void TickPendingLoad(ManualLogSource log)
+        {
+            if (_pendingScene == null) return;
+            if (Time.time < _pendingNextTry) return;
+            if (_pendingTries-- <= 0)
+            {
+                if (log != null) log.LogWarning("[OC2Bridge] pending LOADLEVEL gave up: " + _pendingScene);
+                _pendingScene = null;
+                return;
+            }
+            string scene = _pendingScene;
+            _pendingScene = null;  // LoadLevelBySceneName re-arms on failure
+            PlayerManager pm = GameUtils.RequireManager<PlayerManager>();
+            if (pm == null || !pm.HasPlayer()) Engage(log);
+            if (log != null) log.LogInfo("[OC2Bridge] retrying deferred LOADLEVEL " + scene);
+            LoadLevelBySceneName(scene, log);
+        }
+
         /// <summary>
         /// Load a kitchen level by scene name, from anywhere (menu, map,
         /// mid-round). Bootstraps a campaign session when none exists
@@ -147,7 +173,15 @@ namespace OC2StateBridge
                 if (session == null || session.Progress == null
                     || session.TypeSettings.Type != GameSession.GameType.Cooperative)
                 {
-                    if (!BootstrapCampaignSession(log)) return false;
+                    if (!BootstrapCampaignSession(log))
+                    {
+                        // frontend flow not up yet (fresh-boot race): defer
+                        _pendingScene = sceneName;
+                        _pendingNextTry = Time.time + 2f;
+                        _pendingTries = 10;
+                        if (log != null) log.LogInfo("[OC2Bridge] LOADLEVEL deferred, will retry: " + sceneName);
+                        return false;
+                    }
                     session = GameUtils.GetGameSession();
                 }
                 else if (ServerGameSetup.Mode != GameMode.Campaign)
@@ -178,6 +212,7 @@ namespace OC2StateBridge
                         // LoadingScreenFlow.LoadScene alone skips.
                         InvokeServerLoadLevel(sceneName);
                         if (log != null) log.LogInfo("[OC2Bridge] loading level " + sceneName + " (dir index " + i + ", variant " + v + ")");
+                        _pendingScene = null;
                         return true;
                     }
                 }

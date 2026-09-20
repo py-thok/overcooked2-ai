@@ -39,6 +39,7 @@ namespace OC2StateBridge
 
             InputInjector.EnsureHooked(Logger);
             _server.DrainActions(DispatchCommand);
+            EnvControl.TickPendingLoad(Logger);
 
             if (Input.GetKeyDown(KeyCode.F9))
             {

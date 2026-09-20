@@ -267,12 +267,73 @@ class OC2Env:
         # that is not cookware/tableware
         return name is not None and not name.startswith(("utensil_", "equipment_"))
 
+    # sushi 1-4 recipe routing: raw rice cooks, raw cucumber/fish chop,
+    # nori and chopped fillings go straight onto a plate
+    CHOP_BOARDS = [(15.6, 0.0, -2.4), (20.4, 0.0, -2.4)]
+    PLATE_STATION = (15.0, 0.0, -12.0)
+
+    @classmethod
+    def _is_choppable(cls, name):
+        # raw fillings that must be chopped; rice cooks, nori is direct
+        return (name is not None
+                and not name.startswith(("utensil_", "equipment_", "Chopped"))
+                and name not in ("Seaweed", "SushiRice"))
+
+    def _board_item_count(self, items):
+        """Raw choppable ingredients sitting on a chopping board."""
+        n = 0
+        for it in items:
+            if it.get("kind") != "carryable" or not self._is_choppable(it.get("name")):
+                continue
+            p = it.get("pos")
+            if not p:
+                continue
+            for b in self.CHOP_BOARDS:
+                if abs(p[0] - b[0]) < 1.0 and abs(p[2] - b[2]) < 1.0:
+                    n += 1
+                    break
+        return n
+
+    def _nav_targets(self, held, cookers, plates_pos):
+        """Where this chef should head, given what they hold.
+        Returns (target_list, weight) or (None, 0)."""
+        if held is None:
+            # rice ready somewhere -> next link in the chain is fetching a
+            # plate; without this reroute nothing ever pulls a chef toward
+            # the plate station (held_plate was 0/68 episodes in run10)
+            cooked = [c["pos"] for c in cookers if c.get("is_cooked") and c.get("pos")]
+            if cooked:
+                return (plates_pos, 0.02) if plates_pos else (None, 0.0)
+            return self._crates, 0.01
+        name = held.get("name") or ""
+        if held.get("is_plate"):
+            if held.get("contents"):
+                # serve: ClientPlateStation (the plate station doubles as the
+                # delivery hatch — CanAddItem placement triggers delivery)
+                return [self.PLATE_STATION], 0.02
+            cooked = [c["pos"] for c in cookers if c.get("is_cooked") and c.get("pos")]
+            return (cooked, 0.02) if cooked else (None, 0.0)
+        if name.startswith(("utensil_", "equipment_")):
+            return None, 0.0
+        if name == "SushiRice":
+            return self._cooker_pos, 0.02
+        if name.startswith("Chopped") or name == "Seaweed":
+            return (plates_pos, 0.02) if plates_pos else (None, 0.0)
+        return self.CHOP_BOARDS, 0.02  # raw cucumber/fish -> chopping board
+
     def _reward(self, prev, cur):
         parts = {"score": 0.0, "pot_add": 0.0, "pot_start": 0.0, "pot_cooked": 0.0,
-                 "held_ing": 0.0, "held_utensil": 0.0, "nav": 0.0,
+                 "held_ing": 0.0, "held_utensil": 0.0, "held_plate": 0.0,
+                 "chopped": 0.0, "plated": 0.0, "board_add": 0.0,
+                 "chop_stance": 0.0, "nav": 0.0,
                  "metric_pickup_ing": 0.0}
         pr, cr = prev.get("round", {}), cur.get("round", {})
         parts["score"] = (cr.get("score", 0) - pr.get("score", 0)) / 20.0
+        # chopping: raw filling placed on a board (+0.2 each)
+        prev_board = self._board_item_count(prev.get("items", []))
+        cur_board = self._board_item_count(cur.get("items", []))
+        if cur_board > prev_board:
+            parts["board_add"] += 0.2 * (cur_board - prev_board)
         # shaping: pot pipeline (contents added / cooking progressed / cooked)
         prev_pots = {tuple(c["grid"]): c for c in prev.get("cookers", []) if c.get("grid")}
         for c in cur.get("cookers", []):
@@ -284,32 +345,56 @@ class OC2Env:
             pn = len(p.get("contents") or [])
             cn = len(c.get("contents") or [])
             if cn > pn:
-                parts["pot_add"] += 0.1 * (cn - pn)          # ingredient added to pot
+                parts["pot_add"] += 0.3 * (cn - pn)          # ingredient added to pot
             if p["progress"] == 0 and c["progress"] > 0:
                 parts["pot_start"] += 0.2                    # cooking started
             if not p["is_cooked"] and c["is_cooked"]:
                 parts["pot_cooked"] += 0.3                   # cooking finished
+        # plates visible this step (they move; recompute every step)
+        plates_pos = [i["pos"] for i in cur.get("items", [])
+                      if i.get("kind") == "plate" and i.get("pos")] or [self.PLATE_STATION]
         # shaping: held-item transitions (symmetric so pick/drop cycling nets 0)
         pp, cp = prev.get("players", []), cur.get("players", [])
         for i in range(min(len(pp), len(cp))):
-            ph, ch = self._held_name(pp[i]), self._held_name(cp[i])
-            if ph != ch:
-                if ch is not None and self._is_ingredient(ch):
+            ph, ch = pp[i].get("held"), cp[i].get("held")
+            phn = ph.get("name") if ph else None
+            chn = ch.get("name") if ch else None
+            if phn != chn:
+                if chn is not None and self._is_ingredient(chn):
                     parts["held_ing"] += 0.05                    # picked up an ingredient
                     parts["metric_pickup_ing"] += 1.0            # count (not a reward)
-                if ph is not None and self._is_ingredient(ph) and ch is None:
+                    if chn.startswith("Chopped") and not (phn or "").startswith("Chopped"):
+                        parts["chopped"] += 0.2                  # chopping paid off
+                if phn is not None and self._is_ingredient(phn) and chn is None:
                     parts["held_ing"] -= 0.05                    # put it down (pot_add nets +)
-                if ch is not None and ch.startswith("utensil_"):
+                if chn is not None and chn.startswith("utensil_"):
                     parts["held_utensil"] -= 0.1                 # grabbed a pot/extinguisher
-            # navigation shaping: delta distance to the relevant target
-            # (carrying ingredient -> nearest cooker; empty-handed -> crate)
-            targets = self._cooker_pos if self._is_ingredient(ch) else (
-                self._crates if ch is None else None)
+                p_plate = bool(ph and ph.get("is_plate"))
+                c_plate = bool(ch and ch.get("is_plate"))
+                if c_plate and not p_plate:
+                    parts["held_plate"] += 0.05                  # took a plate
+                elif p_plate and not c_plate:
+                    parts["held_plate"] -= 0.05                  # put the plate down
+            # plating: held plate gains its first contents (rice scooped on)
+            if (ch and ch.get("is_plate") and ch.get("contents")
+                    and not (ph and ph.get("is_plate") and ph.get("contents"))):
+                parts["plated"] += 0.3
+            # navigation shaping: delta distance to the recipe-relevant target
+            targets, w = self._nav_targets(ch, cur.get("cookers", []), plates_pos)
             if targets:
                 d_prev = self._nearest_dist(pp[i].get("pos"), targets)
                 d_cur = self._nearest_dist(cp[i].get("pos"), targets)
-                w = 0.02 if self._is_ingredient(ch) else 0.01
                 parts["nav"] += w * (d_prev - d_cur)
+            # chopping stance: USE held next to a board that has a raw
+            # filling on it — reinforces the actual chopping posture
+            if cur_board > 0:
+                inp = cp[i].get("input") or {}
+                pos = cp[i].get("pos")
+                if inp.get("use") and pos:
+                    for b in self.CHOP_BOARDS:
+                        if abs(pos[0] - b[0]) < 1.6 and abs(pos[2] - b[2]) < 1.6:
+                            parts["chop_stance"] += 0.005
+                            break
         return sum(v for k, v in parts.items() if not k.startswith("metric_")), parts
 
     @staticmethod

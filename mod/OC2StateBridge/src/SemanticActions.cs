@@ -86,6 +86,20 @@ namespace OC2StateBridge
                 return "nothing-nearby";
             }
 
+            // When carrying an ingredient near a pot, place directly into the
+            // pot's ClientPlacementContainer BEFORE consulting the proximity
+            // scan: the scan resolves the cooker station whose referral logic
+            // fails intermittently (~50%), leaving the chef holding the item.
+            // Direct placement into the container is deterministic.
+            if (!held.name.StartsWith("utensil_") && !held.name.StartsWith("equipment_"))
+            {
+                ClientPlacementContainer pot = FindNearestPotContainer(pc.transform.position, 3.0f);
+                if (pot != null)
+                {
+                    Send("Place", pc.gameObject, pot);
+                    return "place-into:" + pot.name;
+                }
+            }
             IClientHandlePlacement ihp = objs.m_iHandlePlacement;
             if (ihp != null)
             {
@@ -94,6 +108,36 @@ namespace OC2StateBridge
             }
             Send("Take", pc.gameObject, (GameObject)null);  // drop
             return "drop";
+        }
+
+        private static ClientPlacementContainer[] _potCache;
+        private static float _potCacheTime;
+
+        /// <summary>Nearest pot's placement container within maxDist of pos,
+        /// or null. Component scan cached for 2s.</summary>
+        private static ClientPlacementContainer FindNearestPotContainer(Vector3 pos, float maxDist)
+        {
+            if (_potCache == null || Time.time > _potCacheTime)
+            {
+                ClientPlacementContainer[] all = UnityEngine.Object.FindObjectsOfType<ClientPlacementContainer>();
+                System.Collections.Generic.List<ClientPlacementContainer> pots =
+                    new System.Collections.Generic.List<ClientPlacementContainer>();
+                foreach (ClientPlacementContainer c in all)
+                {
+                    if (c != null && c.name.Contains("pot")) pots.Add(c);
+                }
+                _potCache = pots.ToArray();
+                _potCacheTime = Time.time + 2f;
+            }
+            ClientPlacementContainer best = null;
+            float bestD = maxDist;
+            foreach (ClientPlacementContainer c in _potCache)
+            {
+                if (c == null) continue;
+                float d = Vector3.Distance(pos, c.transform.position);
+                if (d < bestD) { bestD = d; best = c; }
+            }
+            return best;
         }
 
         /// <summary>Throw the held item (game's own throw event).</summary>
