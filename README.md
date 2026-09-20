@@ -2,6 +2,10 @@
 
 Train two agents to rack up scores in **Overcooked! 2** using reinforcement learning.
 
+> **当前架构文档见 [docs/REAL_GAME_RL_STATUS.md](docs/REAL_GAME_RL_STATUS.md)** —— 现行管线是
+> BepInEx mod + 状态桥（`mod/` + `src/bridge/`)。下面的 simulator roadmap 是早期规划；
+> 旧的屏幕捕获视觉管线已删除（git 历史可查，或 archive/vision-pipeline 分支）。
+
 ## Roadmap
 
 ```
