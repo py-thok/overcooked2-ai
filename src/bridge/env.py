@@ -67,7 +67,10 @@ class OC2Env:
             self.cli.reset_level()
             self.cli.wait_in_round(False, timeout=30)
             if not self.cli.wait_in_round(True, timeout=90):
-                raise RuntimeError("failed to restart level " + self.scene)
+                # round restart occasionally collapses to Loading/WorldMap —
+                # fall back to a full reload instead of dying
+                print(f"reset_level failed on port {self.cli.port}; reloading level")
+                self._load_level_robust()
 
         # wait for intro so chefs are controllable
         t0 = time.time()
