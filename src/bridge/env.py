@@ -279,9 +279,9 @@ class OC2Env:
                 and not name.startswith(("utensil_", "equipment_", "Chopped"))
                 and name not in ("Seaweed", "SushiRice"))
 
-    def _board_item_count(self, items):
-        """Raw choppable ingredients sitting on a chopping board."""
-        n = 0
+    def _board_items(self, items):
+        """Positions of chopping boards holding a raw choppable ingredient."""
+        busy = []
         for it in items:
             if it.get("kind") != "carryable" or not self._is_choppable(it.get("name")):
                 continue
@@ -290,14 +290,18 @@ class OC2Env:
                 continue
             for b in self.CHOP_BOARDS:
                 if abs(p[0] - b[0]) < 1.0 and abs(p[2] - b[2]) < 1.0:
-                    n += 1
+                    busy.append(b)
                     break
-        return n
+        return busy
 
-    def _nav_targets(self, held, cookers, plates_pos):
+    def _nav_targets(self, held, cookers, plates_pos, boards_busy):
         """Where this chef should head, given what they hold.
         Returns (target_list, weight) or (None, 0)."""
         if held is None:
+            # unfinished chopping beats everything: pull the chef back to
+            # the occupied board so the chop can be resumed/finished
+            if boards_busy:
+                return boards_busy, 0.02
             # rice ready somewhere -> next link in the chain is fetching a
             # plate; without this reroute nothing ever pulls a chef toward
             # the plate station (held_plate was 0/68 episodes in run10)
@@ -330,8 +334,9 @@ class OC2Env:
         pr, cr = prev.get("round", {}), cur.get("round", {})
         parts["score"] = (cr.get("score", 0) - pr.get("score", 0)) / 20.0
         # chopping: raw filling placed on a board (+0.2 each)
-        prev_board = self._board_item_count(prev.get("items", []))
-        cur_board = self._board_item_count(cur.get("items", []))
+        prev_boards = self._board_items(prev.get("items", []))
+        cur_boards = self._board_items(cur.get("items", []))
+        prev_board, cur_board = len(prev_boards), len(cur_boards)
         if cur_board > prev_board:
             parts["board_add"] += 0.2 * (cur_board - prev_board)
         # shaping: pot pipeline (contents added / cooking progressed / cooked)
@@ -380,7 +385,8 @@ class OC2Env:
                     and not (ph and ph.get("is_plate") and ph.get("contents"))):
                 parts["plated"] += 0.3
             # navigation shaping: delta distance to the recipe-relevant target
-            targets, w = self._nav_targets(ch, cur.get("cookers", []), plates_pos)
+            targets, w = self._nav_targets(ch, cur.get("cookers", []), plates_pos,
+                                           cur_boards)
             if targets:
                 d_prev = self._nearest_dist(pp[i].get("pos"), targets)
                 d_cur = self._nearest_dist(cp[i].get("pos"), targets)
@@ -393,7 +399,7 @@ class OC2Env:
                 if inp.get("use") and pos:
                     for b in self.CHOP_BOARDS:
                         if abs(pos[0] - b[0]) < 1.6 and abs(pos[2] - b[2]) < 1.6:
-                            parts["chop_stance"] += 0.005
+                            parts["chop_stance"] += 0.02
                             break
         return sum(v for k, v in parts.items() if not k.startswith("metric_")), parts
 
