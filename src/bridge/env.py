@@ -146,6 +146,20 @@ class OC2Env:
             # score reset 0 with the new round is not a penalty
             reward -= parts["score"]
             parts["score"] = 0.0
+        if not done:
+            # Last ~20 game-seconds no pipeline link can complete (cooking
+            # alone takes that long), so under the shaping any action only
+            # risks floor_drop/held_utensil penalties — the policy correctly
+            # learns to freeze. Cut the idle tail; keep playing only while a
+            # loaded plate is being carried (last-second serves are real).
+            tr_now = st.get("round", {}).get("time_remaining", -1)
+            if 0 <= tr_now < 20.0:
+                loaded_plate = any(
+                    (p.get("held") or {}).get("is_plate")
+                    and (p.get("held") or {}).get("contents")
+                    for p in st.get("players", []))
+                if not loaded_plate:
+                    done = True
         # score resets to 0 with the new round; the episode's final score was
         # visible in the previous state
         score = (self._prev.get("round", {}).get("score", 0)

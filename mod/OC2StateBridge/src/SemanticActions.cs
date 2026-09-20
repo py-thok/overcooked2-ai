@@ -91,7 +91,11 @@ namespace OC2StateBridge
             // scan: the scan resolves the cooker station whose referral logic
             // fails intermittently (~50%), leaving the chef holding the item.
             // Direct placement into the container is deterministic.
-            if (!held.name.StartsWith("utensil_") && !held.name.StartsWith("equipment_"))
+            // RICE ONLY: pots cook rice; nori/chopped fillings go on plates.
+            // Without this gate the lock hijacked seaweed near a cooker and
+            // the pot's rejection dropped it on the floor.
+            bool isCookable = held.name.Contains("Rice") && !held.name.StartsWith("Chopped");
+            if (isCookable)
             {
                 ClientPlacementContainer pot = FindNearestPotContainer(pc.transform.position, 3.0f);
                 if (pot != null)
