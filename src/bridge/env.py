@@ -73,7 +73,11 @@ class OC2Env:
 
         self.cli.set_timescale(self.timescale)
         self.cli.set_mode("drive")
-        self._enc = ObsEncoder(self.cli.get_stations())
+        stations = self.cli.get_stations()
+        self._enc = ObsEncoder(stations)
+        slist = stations.get("stations", stations) if isinstance(stations, dict) else stations
+        self._crates = [s["pos"] for s in slist if "DispenserCrate" in s.get("name", "")]
+        self._cooker_pos = [s["pos"] for s in slist if "workstation_cooker" in s.get("name", "")]
         self._release_all()
         self._interact_ready = [0.0, 0.0]
         self._steps = 0
@@ -265,7 +269,8 @@ class OC2Env:
 
     def _reward(self, prev, cur):
         parts = {"score": 0.0, "pot_add": 0.0, "pot_start": 0.0, "pot_cooked": 0.0,
-                 "held_ing": 0.0, "held_utensil": 0.0}
+                 "held_ing": 0.0, "held_utensil": 0.0, "nav": 0.0,
+                 "metric_pickup_ing": 0.0}
         pr, cr = prev.get("round", {}), cur.get("round", {})
         parts["score"] = (cr.get("score", 0) - pr.get("score", 0)) / 20.0
         # shaping: pot pipeline (contents added / cooking progressed / cooked)
@@ -288,15 +293,30 @@ class OC2Env:
         pp, cp = prev.get("players", []), cur.get("players", [])
         for i in range(min(len(pp), len(cp))):
             ph, ch = self._held_name(pp[i]), self._held_name(cp[i])
-            if ph == ch:
-                continue
-            if ch is not None and self._is_ingredient(ch):
-                parts["held_ing"] += 0.05                    # picked up an ingredient
-            if ph is not None and self._is_ingredient(ph) and ch is None:
-                parts["held_ing"] -= 0.05                    # put it down (pot_add nets +)
-            if ch is not None and ch.startswith("utensil_"):
-                parts["held_utensil"] -= 0.1                 # grabbed a pot/extinguisher
-        return sum(parts.values()), parts
+            if ph != ch:
+                if ch is not None and self._is_ingredient(ch):
+                    parts["held_ing"] += 0.05                    # picked up an ingredient
+                    parts["metric_pickup_ing"] += 1.0            # count (not a reward)
+                if ph is not None and self._is_ingredient(ph) and ch is None:
+                    parts["held_ing"] -= 0.05                    # put it down (pot_add nets +)
+                if ch is not None and ch.startswith("utensil_"):
+                    parts["held_utensil"] -= 0.1                 # grabbed a pot/extinguisher
+            # navigation shaping: delta distance to the relevant target
+            # (carrying ingredient -> nearest cooker; empty-handed -> crate)
+            targets = self._cooker_pos if self._is_ingredient(ch) else (
+                self._crates if ch is None else None)
+            if targets:
+                d_prev = self._nearest_dist(pp[i].get("pos"), targets)
+                d_cur = self._nearest_dist(cp[i].get("pos"), targets)
+                w = 0.02 if self._is_ingredient(ch) else 0.01
+                parts["nav"] += w * (d_prev - d_cur)
+        return sum(v for k, v in parts.items() if not k.startswith("metric_")), parts
+
+    @staticmethod
+    def _nearest_dist(pos, targets):
+        if not pos:
+            return 0.0
+        return min((pos[0] - t[0]) ** 2 + (pos[2] - t[2]) ** 2 for t in targets) ** 0.5
 
 
 if __name__ == "__main__":
