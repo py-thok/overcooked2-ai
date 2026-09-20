@@ -347,7 +347,7 @@ class OC2Env:
         cur_boards = self._board_items(cur.get("items", []))
         prev_board, cur_board = len(prev_boards), len(cur_boards)
         if cur_board > prev_board:
-            parts["board_add"] += 0.2 * (cur_board - prev_board)
+            parts["board_add"] += 0.3 * (cur_board - prev_board)
         # shaping: pot pipeline (contents added / cooking progressed / cooked)
         prev_pots = {tuple(c["grid"]): c for c in prev.get("cookers", []) if c.get("grid")}
         for c in cur.get("cookers", []):
@@ -378,7 +378,7 @@ class OC2Env:
                     parts["held_ing"] += 0.05                    # picked up an ingredient
                     parts["metric_pickup_ing"] += 1.0            # count (not a reward)
                     if chn.startswith("Chopped") and not (phn or "").startswith("Chopped"):
-                        parts["chopped"] += 0.2                  # chopping paid off
+                        parts["chopped"] += 0.5                  # chopping paid off
                 if phn is not None and self._is_ingredient(phn) and chn is None:
                     parts["held_ing"] -= 0.05                    # put it down (pot_add nets +)
                     # anti-churn: dropped on the FLOOR (not a station) costs
@@ -419,7 +419,7 @@ class OC2Env:
                         dx, dz = b[0] - pos[0], b[2] - pos[2]
                         dist = (dx * dx + dz * dz) ** 0.5
                         if 0.01 < dist < 1.6 and (fwd[0] * dx + fwd[2] * dz) / dist > 0.5:
-                            parts["chop_stance"] += 0.02
+                            parts["chop_stance"] += 0.05
                             break
         return sum(v for k, v in parts.items() if not k.startswith("metric_")), parts
 
