@@ -163,7 +163,8 @@ namespace OC2StateBridge
                             lock (_actionLock) { _pendingActions.Enqueue("@" + line); }
                             writer.WriteLine("OK");
                         }
-                        else if (line.StartsWith("INTERACT ") || line.StartsWith("THROW "))
+                        else if (line.StartsWith("INTERACT ") || line.StartsWith("THROW ")
+                                 || line.StartsWith("FETCHCRATE ") || line.StartsWith("PLACEBOARD "))
                         {
                             lock (_actionLock) { _pendingActions.Enqueue("@" + line); }
                             writer.WriteLine("OK");
