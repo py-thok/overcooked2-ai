@@ -103,6 +103,16 @@ class StateBridgeClient:
         """Throw the held item via the game's throw event."""
         return self._cmd(f"THROW {player}") == "OK"
 
+    def fetch_crate(self, player, x, z):
+        """Dispense from the crate nearest to (x,z) — direct event, no
+        proximity scan (immune to extinguisher/litter interference)."""
+        return self._cmd(f"FETCHCRATE {player} {float(x)} {float(z)}") == "OK"
+
+    def place_board(self, player, x, z):
+        """Place the held item onto the chopping board nearest to (x,z) —
+        direct event via the board's attach station."""
+        return self._cmd(f"PLACEBOARD {player} {float(x)} {float(z)}") == "OK"
+
     def set_timescale(self, scale):
         """Scale game speed (clamped to [0.25, 8] by the mod)."""
         return self._cmd(f"TIMESCALE {float(scale)}") == "OK"

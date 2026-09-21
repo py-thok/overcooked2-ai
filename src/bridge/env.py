@@ -124,41 +124,43 @@ class OC2Env:
 
     def _preload_chop_board(self):
         """Fetch a cucumber from the crate and put it on chopping board 1
-        for P1, so every episode starts with a ready-to-chop board. Every
-        step is verified and retried; total failure just skips the pre-load
-        (the episode runs unharmed)."""
-        crate_stand = self.level.get("cucumber_stand")
-        if not crate_stand:
+        for P1, so every episode starts with a ready-to-chop board.
+
+        Uses the mod's direct-event commands (FETCHCRATE/PLACEBOARD) instead
+        of the proximity scan: near the cucumber crate the scan keeps losing
+        to the fire extinguisher at (14.4,-2.4) and to floor litter, no
+        matter where the chef stands. Every step is still verified and
+        retried; total failure just skips the pre-load."""
+        crate = self.level.get("cucumber_crate")
+        if not crate:
             return
+        crate_stand = self.level["cucumber_stand"]
         board_stand = self.level["board_stand"]
         board = self.level["chop_boards"][0]
         try:
-            cucumber = False
+            choppable = False
             for attempt in range(3):
+                held = self._held_of(1)
+                if held:
+                    self.cli.throw_item(1)
+                    time.sleep(0.3)
                 self.cli.set_player_pos(crate_stand[0], 0, crate_stand[1], player=1)
-                time.sleep(0.2)
-                self._face_north()
-                self.cli.interact(1)
+                time.sleep(0.3)
+                self.cli.fetch_crate(1, crate[0], crate[2])
                 time.sleep(0.7)  # pickup reaches state ~0.6s after the command
                 held = self._held_of(1)
                 name = held.get("name") if held else None
-                print(f"chop preload pickup try {attempt+1}: held={name}")
-                if name and name.startswith("Cucumber"):
-                    cucumber = True
+                print(f"chop preload fetch try {attempt+1}: held={name}")
+                if name and self._is_choppable(name):
+                    choppable = True
                     break
-                if held:
-                    # grabbed the wrong thing (fire extinguisher at (14.4,-2.4)
-                    # competes with the crate in proximity scans) — toss it
-                    self.cli.throw_item(1)
-                    time.sleep(0.3)
-            if not cucumber:
-                print("chop preload: no cucumber, skipping")
+            if not choppable:
+                print("chop preload: no choppable, skipping")
                 return
             for attempt in range(2):
                 self.cli.set_player_pos(board_stand[0], 0, board_stand[1], player=1)
-                time.sleep(0.2)
-                self._face_north()
-                self.cli.interact(1)  # place onto the board (ihp path)
+                time.sleep(0.3)
+                self.cli.place_board(1, board[0], board[2])
                 time.sleep(0.5)
                 items = self.cli.get_state().get("items", [])
                 if any(it.get("kind") == "carryable"
@@ -175,6 +177,13 @@ class OC2Env:
             self._face_north()
         except Exception as e:
             print(f"chop preload failed ({e}); continuing without it")
+
+    @staticmethod
+    def _is_choppable(name):
+        # raw fillings that must be chopped; rice cooks, nori is direct
+        return (name is not None
+                and not name.startswith(("utensil_", "equipment_", "Chopped"))
+                and name not in ("Seaweed", "SushiRice"))
 
     def _held_of(self, player):
         players = self.cli.get_state().get("players", [])

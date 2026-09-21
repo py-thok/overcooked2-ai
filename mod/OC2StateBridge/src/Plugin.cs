@@ -97,6 +97,24 @@ namespace OC2StateBridge
                 int p = int.Parse(cmd.Substring(7).Trim());
                 Logger.LogInfo("[OC2Bridge] throw: " + SemanticActions.ThrowItem(p, Logger));
             }
+            else if (cmd.StartsWith("@FETCHCRATE "))
+            {
+                // @FETCHCRATE <player> <x> <z>
+                string[] parts = cmd.Substring(12).Split(' ');
+                Logger.LogInfo("[OC2Bridge] fetchcrate: " + SemanticActions.FetchCrate(
+                    int.Parse(parts[0]),
+                    float.Parse(parts[1], System.Globalization.CultureInfo.InvariantCulture),
+                    float.Parse(parts[2], System.Globalization.CultureInfo.InvariantCulture), Logger));
+            }
+            else if (cmd.StartsWith("@PLACEBOARD "))
+            {
+                // @PLACEBOARD <player> <x> <z>
+                string[] parts = cmd.Substring(12).Split(' ');
+                Logger.LogInfo("[OC2Bridge] placeboard: " + SemanticActions.PlaceOnBoard(
+                    int.Parse(parts[0]),
+                    float.Parse(parts[1], System.Globalization.CultureInfo.InvariantCulture),
+                    float.Parse(parts[2], System.Globalization.CultureInfo.InvariantCulture), Logger));
+            }
             else if (cmd.StartsWith("@SETPOS "))
             {
                 // @SETPOS <player> <x> <y> <z>

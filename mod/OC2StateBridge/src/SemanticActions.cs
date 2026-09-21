@@ -155,5 +155,56 @@ namespace OC2StateBridge
             Send("Throw", pc.gameObject, (GameObject)null);
             return "throw";
         }
+
+        /// <summary>Dispense from the crate nearest to (x,z), bypassing the
+        /// proximity scan entirely (same direct-event pattern as the pot
+        /// lock). The scan keeps losing to loose items near the cucumber
+        /// crate (fire extinguisher at (14.4,-2.4), floor litter), making
+        /// scripted fetches unreliable; the chef must still stand close,
+        /// but facing/scan-cone no longer matter.</summary>
+        public static string FetchCrate(int player, float x, float z, ManualLogSource log)
+        {
+            PlayerControls pc = GetPC(player);
+            if (pc == null) return "no-player";
+            IPlayerCarrier carrier = (IPlayerCarrier)pc.GetComponent(typeof(IPlayerCarrier));
+            GameObject held = carrier != null ? carrier.InspectCarriedItem(PlayerAttachTarget.Default) : null;
+            if (held != null) return "hands-full:" + held.name;
+            ClientPickupItemSpawner best = null;
+            float bestD = 3.0f;
+            foreach (ClientPickupItemSpawner s in UnityEngine.Object.FindObjectsOfType<ClientPickupItemSpawner>())
+            {
+                if (s == null || !s.name.StartsWith("DispenserCrate")) continue;
+                Vector3 d = s.transform.position - new Vector3(x, 0f, z);
+                d.y = 0f;
+                if (d.magnitude < bestD) { bestD = d.magnitude; best = s; }
+            }
+            if (best == null) return "no-crate";
+            Send("PickUp", pc.gameObject, best);
+            return "fetch:" + best.name;
+        }
+
+        /// <summary>Place the held item onto the chopping board nearest to
+        /// (x,z) via its ClientAttachStation directly (no proximity scan).
+        /// </summary>
+        public static string PlaceOnBoard(int player, float x, float z, ManualLogSource log)
+        {
+            PlayerControls pc = GetPC(player);
+            if (pc == null) return "no-player";
+            IPlayerCarrier carrier = (IPlayerCarrier)pc.GetComponent(typeof(IPlayerCarrier));
+            GameObject held = carrier != null ? carrier.InspectCarriedItem(PlayerAttachTarget.Default) : null;
+            if (held == null) return "empty-handed";
+            ClientAttachStation best = null;
+            float bestD = 3.0f;
+            foreach (ClientAttachStation s in UnityEngine.Object.FindObjectsOfType<ClientAttachStation>())
+            {
+                if (s == null || !s.name.Contains("chopping_board")) continue;
+                Vector3 d = s.transform.position - new Vector3(x, 0f, z);
+                d.y = 0f;
+                if (d.magnitude < bestD) { bestD = d.magnitude; best = s; }
+            }
+            if (best == null) return "no-board";
+            Send("Place", pc.gameObject, best);
+            return "place-board:" + best.name;
+        }
     }
 }

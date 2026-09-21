@@ -20,8 +20,8 @@ SUSHI_1_4 = {
     # for hours without this — the stance needs ~20 consecutive use-hold
     # steps, too long to discover by chance)
     "cucumber_crate": (13.2, 0.0, -2.4),
-    "cucumber_stand": (13.2, -3.4),   # closer to the crate than the extinguisher (14.4,-2.4)
-    "board_stand": (15.6, -3.4),      # south of board 1, facing north
+    "cucumber_stand": (13.2, -3.6),   # probes used crate_z - 1.2 successfully
+    "board_stand": (15.6, -3.6),      # south of board 1, facing north
 }
 
 LEVELS = {SUSHI_1_4["scene"]: SUSHI_1_4}
