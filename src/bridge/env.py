@@ -107,6 +107,10 @@ class OC2Env:
         for p, (x, z) in enumerate(self.level["spawn_spots"]):
             self.cli.set_player_pos(x, 0, z, player=p)
         time.sleep(0.25)
+        self._face_north()
+        self._preload_chop_board()
+
+    def _face_north(self):
         players = self.cli.get_state().get("players", [])
         for p in range(2):
             sign = (1, 1)
@@ -117,6 +121,60 @@ class OC2Env:
         time.sleep(0.25)
         for p in range(2):
             self.cli.send_action(player=p, move=(0.0, 0.0))
+
+    def _preload_chop_board(self):
+        """Fetch a cucumber from the crate and put it on chopping board 1
+        for P1, so every episode starts with a ready-to-chop board. Every
+        step is verified and retried; total failure just skips the pre-load
+        (the episode runs unharmed)."""
+        crate_stand = self.level.get("cucumber_stand")
+        if not crate_stand:
+            return
+        board_stand = self.level["board_stand"]
+        board = self.level["chop_boards"][0]
+        try:
+            cucumber = False
+            for _ in range(3):
+                self.cli.set_player_pos(crate_stand[0], 0, crate_stand[1], player=1)
+                time.sleep(0.2)
+                self._face_north()
+                self.cli.interact(1)
+                time.sleep(0.7)  # pickup reaches state ~0.6s after the command
+                held = self._held_of(1)
+                if held and held.get("name", "").startswith("Cucumber"):
+                    cucumber = True
+                    break
+                if held:
+                    # grabbed the wrong thing (fire extinguisher at (14.4,-2.4)
+                    # competes with the crate in proximity scans) — toss it
+                    self.cli.throw_item(1)
+                    time.sleep(0.3)
+            if not cucumber:
+                return
+            for _ in range(2):
+                self.cli.set_player_pos(board_stand[0], 0, board_stand[1], player=1)
+                time.sleep(0.2)
+                self._face_north()
+                self.cli.interact(1)  # place onto the board (ihp path)
+                time.sleep(0.5)
+                items = self.cli.get_state().get("items", [])
+                if any(it.get("kind") == "carryable"
+                       and abs((it.get("pos") or [9e9])[0] - board[0]) < 1.0
+                       and abs((it.get("pos") or [0, 0, 9e9])[2] - board[2]) < 1.0
+                       for it in items):
+                    break
+            # leave P1 parked in front of the loaded board, facing it
+            self.cli.set_player_pos(board_stand[0], 0, board_stand[1], player=1)
+            time.sleep(0.15)
+            self._face_north()
+        except Exception as e:
+            print(f"chop preload failed ({e}); continuing without it")
+
+    def _held_of(self, player):
+        players = self.cli.get_state().get("players", [])
+        if player < len(players):
+            return players[player].get("held")
+        return None
 
     def step(self, actions):
         self.apply(actions)
