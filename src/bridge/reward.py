@@ -33,6 +33,9 @@ REWARD_WEIGHTS = {
                           # the chop pays immediately, not only on pickup
                           # (partial-chop farming otherwise beats finishing)
     "chop_stance": 0.05,  # per step: USE held while facing an occupied board
+    "scoop_stance": 0.05, # per step: empty plate in hand next to a cooked pot
+                          # (rice now cooks every episode via preload, but
+                          # plated stayed ~1/50 — nobody brought a plate)
     "floor_drop": -0.05,  # ingredient dropped on the floor (anti-churn)
 }
 
@@ -119,7 +122,7 @@ def compute_reward(prev, cur, ctx):
     parts = {"score": 0.0, "pot_add": 0.0, "pot_start": 0.0, "pot_cooked": 0.0,
              "held_ing": 0.0, "held_utensil": 0.0, "held_plate": 0.0,
              "chopped": 0.0, "plated": 0.0, "plate_add": 0.0, "board_add": 0.0, "chop_prog": 0.0,
-             "chop_done": 0.0, "chop_stance": 0.0, "floor_drop": 0.0, "nav": 0.0,
+             "chop_done": 0.0, "chop_stance": 0.0, "scoop_stance": 0.0, "floor_drop": 0.0, "nav": 0.0,
              "metric_pickup_ing": 0.0}
     pr, cr = prev.get("round", {}), cur.get("round", {})
     parts["score"] = (cr.get("score", 0) - pr.get("score", 0)) * W["score"]
@@ -221,5 +224,18 @@ def compute_reward(prev, cur, ctx):
                     if (_STANCE_MIN_DIST < dist < _STANCE_MAX_DIST
                             and (fwd[0] * dx + fwd[2] * dz) / dist > _STANCE_FACING_DOT):
                         parts["chop_stance"] += W["chop_stance"]
+                        break
+        # scoop stance: holding an EMPTY plate within reach of a cooked pot —
+        # the exact setup for scooping rice (mirrors chop_stance)
+        if ch and ch.get("is_plate") and not ch.get("contents"):
+            pos = cp[i].get("pos")
+            if pos:
+                for c in cur.get("cookers", []):
+                    cpos = c.get("pos")
+                    if not c.get("is_cooked") or not cpos:
+                        continue
+                    d = ((cpos[0] - pos[0]) ** 2 + (cpos[2] - pos[2]) ** 2) ** 0.5
+                    if d < _STANCE_MAX_DIST:
+                        parts["scoop_stance"] += W["scoop_stance"]
                         break
     return sum(v for k, v in parts.items() if not k.startswith("metric_")), parts
