@@ -22,6 +22,13 @@ SUSHI_1_4 = {
     "cucumber_crate": (13.2, 0.0, -2.4),
     "cucumber_stand": (13.2, -3.6),   # probes used crate_z - 1.2 successfully
     "board_stand": (15.6, -3.6),      # south of board 1, facing north
+    # rice curriculum: start rice cooking at spawn (fetch verified:
+    # (8.4,-2.4) dispenses SushiRice; plated stayed ~2/50 because the
+    # cooked-rice window almost never aligned with a fetched plate)
+    "rice_crate": (8.4, 0.0, -2.4),
+    "rice_stand": (8.4, -3.6),        # below the crate, next to P0's spawn
+    "rice_cooker": (22.8, 0.0, -4.8), # middle cooker
+    "rice_pot_stand": (22.8, -6.0),   # south of that cooker
 }
 
 LEVELS = {SUSHI_1_4["scene"]: SUSHI_1_4}

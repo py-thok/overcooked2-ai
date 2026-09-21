@@ -109,6 +109,56 @@ class OC2Env:
         time.sleep(0.25)
         self._face_north()
         self._preload_chop_board()
+        self._preload_rice()
+
+    def _preload_rice(self):
+        """P0 starts a pot of rice at spawn, so every episode has a cooked
+        rice window in the mid-round (scooping — plated — stayed ~2/50
+        because cooked rice and a fetched plate almost never coincided).
+        Same direct-event pattern as the chop preload: FETCHCRATE at the
+        rice crate, then INTERACT next to the cooker — the pot-lock routes
+        raw rice straight into the pot."""
+        crate = self.level.get("rice_crate")
+        if not crate:
+            return
+        cooker = self.level["rice_cooker"]
+        pot_stand = self.level["rice_pot_stand"]
+        try:
+            got = False
+            for attempt in range(3):
+                if self._held_of(0):
+                    self.cli.throw_item(0)
+                    time.sleep(0.3)
+                self.cli.set_player_pos(self.level["rice_stand"][0], 0,
+                                        self.level["rice_stand"][1], player=0)
+                time.sleep(0.3)
+                self.cli.fetch_crate(0, crate[0], crate[2])
+                time.sleep(0.7)
+                name = (self._held_of(0) or {}).get("name")
+                print(f"rice preload fetch try {attempt+1}: held={name}")
+                if name == "SushiRice":
+                    got = True
+                    break
+            if not got:
+                print("rice preload: no rice, skipping")
+                return
+            self.cli.set_player_pos(pot_stand[0], 0, pot_stand[1], player=0)
+            time.sleep(0.3)
+            self.cli.interact(0)  # pot-lock: rice -> nearest pot container
+            time.sleep(0.5)
+            loaded = any(abs((c.get("pos") or [9e9])[0] - cooker[0]) < 1.5
+                         and abs((c.get("pos") or [0, 0, 9e9])[2] - cooker[2]) < 1.5
+                         and c.get("contents")
+                         for c in self.cli.get_state().get("cookers", []))
+            print("rice preload: pot loaded" if loaded
+                  else f"rice preload: pot empty after interact, "
+                       f"held={(self._held_of(0) or {}).get('name')}")
+            # leave P0 back near its spawn, not blocking the cooker
+            self.cli.set_player_pos(self.level["spawn_spots"][0][0], 0,
+                                    self.level["spawn_spots"][0][1], player=0)
+            time.sleep(0.15)
+        except Exception as e:
+            print(f"rice preload failed ({e}); continuing without it")
 
     def _face_north(self):
         players = self.cli.get_state().get("players", [])
