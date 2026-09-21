@@ -245,6 +245,13 @@ namespace OC2StateBridge
                 w.Key("pos"); WriteVec3(w, pos);
                 w.Key("grid"); WriteGridIndex(w, pos);
                 w.Key("kind"); w.Value(ClassifyItem(go));
+                // plates report their contents even on counters/floor —
+                // "plate gained an ingredient" must be visible wherever the
+                // plate sits, or assembly (rice+nori+filling) is unshapable
+                if (go.GetComponent<Plate>() != null)
+                {
+                    w.Key("contents"); WriteContents(w, go);
+                }
                 // chopping progress (0..1) for items on a chopping board —
                 // the only dense signal for "use is actually chopping"
                 ClientWorkableItem workable = go.GetComponent<ClientWorkableItem>();

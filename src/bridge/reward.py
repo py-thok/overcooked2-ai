@@ -22,6 +22,9 @@ REWARD_WEIGHTS = {
     "held_plate": 0.05,   # symmetric: +took / -put down
     "chopped": 0.5,       # held item became Chopped*
     "plated": 0.3,        # held plate gained its first contents
+    "plate_add": 0.3,     # any plate (held or on a surface) gained a content —
+                          # assembly needs rice+nori+filling; plating only the
+                          # first content left additions 2/3 unrewarded
     "board_add": 0.3,     # raw filling placed on a chopping board
     "chop_prog": 0.5,     # per unit of chop progress on a board (dense;
                           # "chopped" only fires when the item is picked up,
@@ -76,6 +79,19 @@ def nearest_dist(pos, targets):
     return min((pos[0] - t[0]) ** 2 + (pos[2] - t[2]) ** 2 for t in targets) ** 0.5
 
 
+def _total_plate_contents(st):
+    """Total ingredient count across every visible plate (held + loose)."""
+    total = 0
+    for p in st.get("players", []):
+        h = p.get("held")
+        if h and h.get("is_plate"):
+            total += len(h.get("contents") or [])
+    for it in st.get("items", []):
+        if it.get("kind") == "plate":
+            total += len(it.get("contents") or [])
+    return total
+
+
 def _board_chop_stats(items, chop_boards):
     """(sum, max) of work_progress (0..1) over items on chopping boards."""
     total, best = 0.0, 0.0
@@ -102,7 +118,7 @@ def compute_reward(prev, cur, ctx):
     W = REWARD_WEIGHTS
     parts = {"score": 0.0, "pot_add": 0.0, "pot_start": 0.0, "pot_cooked": 0.0,
              "held_ing": 0.0, "held_utensil": 0.0, "held_plate": 0.0,
-             "chopped": 0.0, "plated": 0.0, "board_add": 0.0, "chop_prog": 0.0,
+             "chopped": 0.0, "plated": 0.0, "plate_add": 0.0, "board_add": 0.0, "chop_prog": 0.0,
              "chop_done": 0.0, "chop_stance": 0.0, "floor_drop": 0.0, "nav": 0.0,
              "metric_pickup_ing": 0.0}
     pr, cr = prev.get("round", {}), cur.get("round", {})
@@ -122,6 +138,11 @@ def compute_reward(prev, cur, ctx):
         parts["chop_prog"] += W["chop_prog"] * (cur_sum - prev_sum)
     if prev_max < 0.99 <= cur_max:
         parts["chop_done"] += W["chop_done"]
+    # assembly: total contents across ALL plates (held + surfaces). Serving
+    # drops the sum — clamp to positive deltas so serving never punishes.
+    plate_delta = _total_plate_contents(cur) - _total_plate_contents(prev)
+    if plate_delta > 0:
+        parts["plate_add"] += W["plate_add"] * plate_delta
     # pot pipeline (contents added / cooking progressed / cooked)
     prev_pots = {tuple(c["grid"]): c for c in prev.get("cookers", []) if c.get("grid")}
     for c in cur.get("cookers", []):
