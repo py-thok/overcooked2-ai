@@ -23,6 +23,9 @@ REWARD_WEIGHTS = {
     "chopped": 0.5,       # held item became Chopped*
     "plated": 0.3,        # held plate gained its first contents
     "board_add": 0.3,     # raw filling placed on a chopping board
+    "chop_prog": 0.5,     # per unit of chop progress on a board (dense;
+                          # "chopped" only fires when the item is picked up,
+                          # so without this chop completion is invisible)
     "chop_stance": 0.05,  # per step: USE held while facing an occupied board
     "floor_drop": -0.05,  # ingredient dropped on the floor (anti-churn)
 }
@@ -70,6 +73,23 @@ def nearest_dist(pos, targets):
     return min((pos[0] - t[0]) ** 2 + (pos[2] - t[2]) ** 2 for t in targets) ** 0.5
 
 
+def _board_chop_progress(items, chop_boards):
+    """Sum of work_progress (0..1) over items sitting on chopping boards."""
+    total = 0.0
+    for it in items:
+        wp = it.get("work_progress")
+        if not wp:
+            continue
+        p = it.get("pos")
+        if not p:
+            continue
+        for b in chop_boards:
+            if abs(p[0] - b[0]) < 1.0 and abs(p[2] - b[2]) < 1.0:
+                total += wp
+                break
+    return total
+
+
 def compute_reward(prev, cur, ctx):
     """Diff two states -> (reward, parts).
     ctx: {"chop_boards", "plate_station", "crates", "cooker_pos"}
@@ -77,7 +97,7 @@ def compute_reward(prev, cur, ctx):
     W = REWARD_WEIGHTS
     parts = {"score": 0.0, "pot_add": 0.0, "pot_start": 0.0, "pot_cooked": 0.0,
              "held_ing": 0.0, "held_utensil": 0.0, "held_plate": 0.0,
-             "chopped": 0.0, "plated": 0.0, "board_add": 0.0,
+             "chopped": 0.0, "plated": 0.0, "board_add": 0.0, "chop_prog": 0.0,
              "chop_stance": 0.0, "floor_drop": 0.0, "nav": 0.0,
              "metric_pickup_ing": 0.0}
     pr, cr = prev.get("round", {}), cur.get("round", {})
@@ -88,6 +108,13 @@ def compute_reward(prev, cur, ctx):
     prev_board, cur_board = len(prev_boards), len(cur_boards)
     if cur_board > prev_board:
         parts["board_add"] += W["board_add"] * (cur_board - prev_board)
+    # dense chop progress: sum of work_progress over items on boards.
+    # Positive deltas only — removing/losing an item must not claw reward
+    # back, and the completion bonus comes from "chopped" on pickup.
+    prog_delta = (_board_chop_progress(cur.get("items", []), ctx["chop_boards"])
+                  - _board_chop_progress(prev.get("items", []), ctx["chop_boards"]))
+    if prog_delta > 0:
+        parts["chop_prog"] += W["chop_prog"] * prog_delta
     # pot pipeline (contents added / cooking progressed / cooked)
     prev_pots = {tuple(c["grid"]): c for c in prev.get("cookers", []) if c.get("grid")}
     for c in cur.get("cookers", []):

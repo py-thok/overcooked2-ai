@@ -245,6 +245,14 @@ namespace OC2StateBridge
                 w.Key("pos"); WriteVec3(w, pos);
                 w.Key("grid"); WriteGridIndex(w, pos);
                 w.Key("kind"); w.Value(ClassifyItem(go));
+                // chopping progress (0..1) for items on a chopping board —
+                // the only dense signal for "use is actually chopping"
+                ClientWorkableItem workable = go.GetComponent<ClientWorkableItem>();
+                if (workable != null)
+                {
+                    try { w.Key("work_progress"); w.Value(workable.GetProgress()); }
+                    catch { }
+                }
                 w.EndObject();
             }
             w.EndArray();
