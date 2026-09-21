@@ -190,6 +190,19 @@ class OC2Env:
             print("rice preload: pot loaded" if loaded
                   else f"rice preload: pot empty after interact, "
                        f"held={(self._held_of(0) or {}).get('name')}")
+            if loaded:
+                # speed-cook at 8x so the episode OPENS with cooked rice
+                # (plated stayed 1-2/50: even with rice cooking and a plate
+                # in hand, the mid-round cooked window never got exploited)
+                self.cli.set_timescale(8.0)
+                t0 = time.time()
+                while time.time() - t0 < 8:
+                    if any(c.get("is_cooked")
+                           for c in self.cli.get_state().get("cookers", [])):
+                        break
+                    time.sleep(0.5)
+                self.cli.set_timescale(self.timescale)
+                print("rice preload: rice cooked")
             # leave P0 back near its spawn, not blocking the cooker
             self.cli.set_player_pos(self.level["spawn_spots"][0][0], 0,
                                     self.level["spawn_spots"][0][1], player=0)
