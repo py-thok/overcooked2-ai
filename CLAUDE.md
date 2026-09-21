@@ -14,6 +14,8 @@ RL 在 Overcooked! 2 寿司关(s_sushi_1_4,campaign 1-4)拿极高分(世界纪�
 3. 启动顺序(先 2 后 1,PowerShell):
    ```powershell
    $env:OC2BRIDGE_PORT='8767'; Start-Process "E:\...\Overcooked2_inst2\Overcooked2.exe" -WorkingDirectory "E:\...\Overcooked2_inst2"; Remove-Item Env:OC2BRIDGE_PORT
+   # 必须等 8767 LISTENING 再起实例 1!间隔太短 Steam 仍会把实例 2 重定向到原路径
+   # (两个 Overcooked2 进程同路径 = 失败了,全杀重来)
    Start-Process "E:\...\Overcooked! 2\Overcooked2.exe" -WorkingDirectory "E:\...\Overcooked! 2"
    ```
    不要用 ProcessStartInfo UseShellExecute=$false(游戏立刻 exit 53)。
