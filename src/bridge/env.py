@@ -134,14 +134,16 @@ class OC2Env:
         board = self.level["chop_boards"][0]
         try:
             cucumber = False
-            for _ in range(3):
+            for attempt in range(3):
                 self.cli.set_player_pos(crate_stand[0], 0, crate_stand[1], player=1)
                 time.sleep(0.2)
                 self._face_north()
                 self.cli.interact(1)
                 time.sleep(0.7)  # pickup reaches state ~0.6s after the command
                 held = self._held_of(1)
-                if held and held.get("name", "").startswith("Cucumber"):
+                name = held.get("name") if held else None
+                print(f"chop preload pickup try {attempt+1}: held={name}")
+                if name and name.startswith("Cucumber"):
                     cucumber = True
                     break
                 if held:
@@ -150,8 +152,9 @@ class OC2Env:
                     self.cli.throw_item(1)
                     time.sleep(0.3)
             if not cucumber:
+                print("chop preload: no cucumber, skipping")
                 return
-            for _ in range(2):
+            for attempt in range(2):
                 self.cli.set_player_pos(board_stand[0], 0, board_stand[1], player=1)
                 time.sleep(0.2)
                 self._face_north()
@@ -162,7 +165,10 @@ class OC2Env:
                        and abs((it.get("pos") or [9e9])[0] - board[0]) < 1.0
                        and abs((it.get("pos") or [0, 0, 9e9])[2] - board[2]) < 1.0
                        for it in items):
+                    print("chop preload: board loaded")
                     break
+                print(f"chop preload place try {attempt+1}: board still empty, "
+                      f"held={(self._held_of(1) or {}).get('name')}")
             # leave P1 parked in front of the loaded board, facing it
             self.cli.set_player_pos(board_stand[0], 0, board_stand[1], player=1)
             time.sleep(0.15)
