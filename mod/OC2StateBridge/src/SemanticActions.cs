@@ -183,9 +183,11 @@ namespace OC2StateBridge
             return "fetch:" + best.name;
         }
 
-        /// <summary>Take a plate from the plate station directly (PickUp
-        /// event on the ClientPlateStation — same handler the proximity
-        /// scan would route to, minus the scan's unreliability).</summary>
+        /// <summary>Pick up the loose plate nearest to the player, via the
+        /// same PickUp event the proximity scan sends (GameObject overload —
+        /// m_TheOriginalHandlePickup is a GameObject). Plates are loose
+        /// items in this level; the "plate station" is the delivery hatch,
+        /// NOT a dispenser (its CanAddItem requires a ClientPlate).</summary>
         public static string FetchPlate(int player, ManualLogSource log)
         {
             PlayerControls pc = GetPC(player);
@@ -193,17 +195,17 @@ namespace OC2StateBridge
             IPlayerCarrier carrier = (IPlayerCarrier)pc.GetComponent(typeof(IPlayerCarrier));
             GameObject held = carrier != null ? carrier.InspectCarriedItem(PlayerAttachTarget.Default) : null;
             if (held != null) return "hands-full:" + held.name;
-            ClientPlateStation best = null;
+            PhysicalAttachment best = null;
             float bestD = 3.0f;
-            foreach (ClientPlateStation s in UnityEngine.Object.FindObjectsOfType<ClientPlateStation>())
+            foreach (PhysicalAttachment pa in UnityEngine.Object.FindObjectsOfType<PhysicalAttachment>())
             {
-                if (s == null) continue;
-                Vector3 d = s.transform.position - pc.transform.position;
+                if (pa == null || pa.gameObject.GetComponent<Plate>() == null) continue;
+                Vector3 d = pa.transform.position - pc.transform.position;
                 d.y = 0f;
-                if (d.magnitude < bestD) { bestD = d.magnitude; best = s; }
+                if (d.magnitude < bestD) { bestD = d.magnitude; best = pa; }
             }
-            if (best == null) return "no-plate-station";
-            Send("PickUp", pc.gameObject, best);
+            if (best == null) return "no-plate";
+            Send("PickUp", pc.gameObject, best.gameObject);
             return "fetch-plate:" + best.name;
         }
 

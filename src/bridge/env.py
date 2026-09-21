@@ -72,15 +72,27 @@ class OC2Env:
                 print(f"reset_level failed on port {self.cli.port}; reloading level")
                 self._load_level_robust()
 
-        # wait for intro so chefs are controllable
-        t0 = time.time()
-        while True:
-            st = self.cli.get_state()
+        # wait for intro so chefs are controllable; a collapsed reload can
+        # leave the round running with no players — retry the full load
+        # instead of dying (run33 crashed here)
+        for attempt in range(3):
+            t0 = time.time()
+            while True:
+                st = self.cli.get_state()
+                if st["round"]["time_elapsed"] > 4 and len(st.get("players", [])) >= 2:
+                    break
+                if time.time() - t0 > 60:
+                    break
+                time.sleep(0.3)
+            else:
+                continue
             if st["round"]["time_elapsed"] > 4 and len(st.get("players", [])) >= 2:
                 break
-            if time.time() - t0 > 60:
-                raise RuntimeError("players never spawned in " + self.scene)
-            time.sleep(0.3)
+            print(f"players never spawned on port {self.cli.port} "
+                  f"(attempt {attempt+1}); reloading level")
+            self._load_level_robust()
+        else:
+            raise RuntimeError("players never spawned in " + self.scene)
 
         self.cli.set_timescale(self.timescale)
         self.cli.set_mode("drive")
