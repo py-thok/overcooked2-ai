@@ -160,8 +160,13 @@ def compute_reward(prev, cur, ctx):
         if not p["is_cooked"] and c["is_cooked"]:
             parts["pot_cooked"] += W["pot_cooked"]
     # plates visible this step (they move; recompute every step)
-    plates_pos = [i["pos"] for i in cur.get("items", [])
-                  if i.get("kind") == "plate" and i.get("pos")] or [ctx["plate_station"]]
+    plate_items = [i for i in cur.get("items", [])
+                   if i.get("kind") == "plate" and i.get("pos")]
+    plates_pos = [i["pos"] for i in plate_items] or [ctx["plate_station"]]
+    fullest = max(plate_items, key=lambda i: len(i.get("contents") or []),
+                  default=None)
+    plates_best = ([fullest["pos"]]
+                   if fullest is not None and fullest.get("contents") else None)
     # held-item transitions (symmetric so pick/drop cycling nets 0)
     pp, cp = prev.get("players", []), cur.get("players", [])
     for i in range(min(len(pp), len(cp))):
@@ -196,7 +201,7 @@ def compute_reward(prev, cur, ctx):
             parts["plated"] += W["plated"]
         # navigation shaping: delta distance to the recipe-relevant target
         targets, w = nav_targets(ch, cur.get("cookers", []), plates_pos,
-                                 cur_boards, ctx)
+                                 cur_boards, ctx, plates_best=plates_best)
         if targets:
             d_prev = nearest_dist(pp[i].get("pos"), targets)
             d_cur = nearest_dist(cp[i].get("pos"), targets)

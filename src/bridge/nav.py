@@ -35,9 +35,12 @@ def board_items(items, chop_boards):
     return busy
 
 
-def nav_targets(held, cookers, plates_pos, boards_busy, ctx):
+def nav_targets(held, cookers, plates_pos, boards_busy, ctx, plates_best=None):
     """Where this chef should head, given what they hold.
     ctx: {"chop_boards", "plate_station", "crates", "cooker_pos"}.
+    plates_best: [pos] of the plate with most contents, if any plate is
+    loaded — assembly must CONCENTRATE on one plate (nearest-plate routing
+    used to scatter seaweed/rice/filling across different plates).
     Returns (target_list, weight) or (None, 0)."""
     if held is None:
         # unfinished chopping beats everything: pull the chef back to
@@ -53,10 +56,16 @@ def nav_targets(held, cookers, plates_pos, boards_busy, ctx):
         return ctx["crates"], 0.01
     name = held.get("name") or ""
     if held.get("is_plate"):
-        if held.get("contents"):
-            # serve: ClientPlateStation (the plate station doubles as the
-            # delivery hatch — CanAddItem placement triggers delivery)
+        contents = held.get("contents") or []
+        if len(contents) >= 3:
+            # complete sushi: ClientPlateStation (the plate station doubles
+            # as the delivery hatch — CanAddItem placement triggers delivery)
             return [ctx["plate_station"]], 0.02
+        if contents:
+            # partial plate: carrying it to the hatch delivers nothing.
+            # Head for the crates so the chef can put it down and fetch
+            # the missing ingredients.
+            return ctx["crates"], 0.01
         cooked = [c["pos"] for c in cookers if c.get("is_cooked") and c.get("pos")]
         return (cooked, 0.02) if cooked else (None, 0.0)
     if name.startswith(("utensil_", "equipment_")):
@@ -64,5 +73,7 @@ def nav_targets(held, cookers, plates_pos, boards_busy, ctx):
     if name == "SushiRice":
         return ctx["cooker_pos"], 0.02
     if name.startswith("Chopped") or name == "Seaweed":
+        if plates_best:
+            return plates_best, 0.02
         return (plates_pos, 0.02) if plates_pos else (None, 0.0)
     return ctx["chop_boards"], 0.02  # raw cucumber/fish -> chopping board
