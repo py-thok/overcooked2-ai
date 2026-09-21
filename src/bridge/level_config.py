@@ -29,6 +29,9 @@ SUSHI_1_4 = {
     "rice_stand": (8.4, -3.6),        # below the crate, next to P0's spawn
     "rice_cooker": (22.8, 0.0, -4.8), # middle cooker
     "rice_pot_stand": (22.8, -6.0),   # south of that cooker
+    # plate preload: P0 spawns holding an empty plate (scoop_stance stayed
+    # 0/50 — nobody fetched a plate at all; the station is far south)
+    "plate_stand": (15.0, -10.8),     # north of the plate station (15,-12)
 }
 
 LEVELS = {SUSHI_1_4["scene"]: SUSHI_1_4}

@@ -115,6 +115,11 @@ namespace OC2StateBridge
                     float.Parse(parts[1], System.Globalization.CultureInfo.InvariantCulture),
                     float.Parse(parts[2], System.Globalization.CultureInfo.InvariantCulture), Logger));
             }
+            else if (cmd.StartsWith("@FETCHPLATE "))
+            {
+                int p = int.Parse(cmd.Substring(12).Trim());
+                Logger.LogInfo("[OC2Bridge] fetchplate: " + SemanticActions.FetchPlate(p, Logger));
+            }
             else if (cmd.StartsWith("@SETPOS "))
             {
                 // @SETPOS <player> <x> <y> <z>

@@ -113,6 +113,11 @@ class StateBridgeClient:
         direct event via the board's attach station."""
         return self._cmd(f"PLACEBOARD {player} {float(x)} {float(z)}") == "OK"
 
+    def fetch_plate(self, player):
+        """Take a plate from the plate station nearest to the player —
+        direct PickUp event, no proximity scan."""
+        return self._cmd(f"FETCHPLATE {player}") == "OK"
+
     def set_timescale(self, scale):
         """Scale game speed (clamped to [0.25, 8] by the mod)."""
         return self._cmd(f"TIMESCALE {float(scale)}") == "OK"

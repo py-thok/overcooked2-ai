@@ -110,6 +110,31 @@ class OC2Env:
         self._face_north()
         self._preload_chop_board()
         self._preload_rice()
+        self._preload_plate()
+
+    def _preload_plate(self):
+        """P0 ends the spawn holding an empty plate: with rice already
+        cooking (rice preload), the scoop window opens mid-round every
+        episode. scoop_stance stayed 0/50 without this — the plate station
+        is far south of the action and nobody ever fetched a plate."""
+        stand = self.level.get("plate_stand")
+        if not stand:
+            return
+        try:
+            for attempt in range(3):
+                if self._held_of(0):
+                    self.cli.throw_item(0)
+                    time.sleep(0.3)
+                self.cli.set_player_pos(stand[0], 0, stand[1], player=0)
+                time.sleep(0.3)
+                self.cli.fetch_plate(0)
+                time.sleep(0.7)
+                held = self._held_of(0) or {}
+                print(f"plate preload try {attempt+1}: held={held.get('name')}")
+                if held.get("is_plate"):
+                    break
+        except Exception as e:
+            print(f"plate preload failed ({e}); continuing without it")
 
     def _preload_rice(self):
         """P0 starts a pot of rice at spawn, so every episode has a cooked

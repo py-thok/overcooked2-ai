@@ -164,7 +164,8 @@ namespace OC2StateBridge
                             writer.WriteLine("OK");
                         }
                         else if (line.StartsWith("INTERACT ") || line.StartsWith("THROW ")
-                                 || line.StartsWith("FETCHCRATE ") || line.StartsWith("PLACEBOARD "))
+                                 || line.StartsWith("FETCHCRATE ") || line.StartsWith("PLACEBOARD ")
+                                 || line.StartsWith("FETCHPLATE "))
                         {
                             lock (_actionLock) { _pendingActions.Enqueue("@" + line); }
                             writer.WriteLine("OK");

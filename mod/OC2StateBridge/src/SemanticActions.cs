@@ -183,6 +183,30 @@ namespace OC2StateBridge
             return "fetch:" + best.name;
         }
 
+        /// <summary>Take a plate from the plate station directly (PickUp
+        /// event on the ClientPlateStation — same handler the proximity
+        /// scan would route to, minus the scan's unreliability).</summary>
+        public static string FetchPlate(int player, ManualLogSource log)
+        {
+            PlayerControls pc = GetPC(player);
+            if (pc == null) return "no-player";
+            IPlayerCarrier carrier = (IPlayerCarrier)pc.GetComponent(typeof(IPlayerCarrier));
+            GameObject held = carrier != null ? carrier.InspectCarriedItem(PlayerAttachTarget.Default) : null;
+            if (held != null) return "hands-full:" + held.name;
+            ClientPlateStation best = null;
+            float bestD = 3.0f;
+            foreach (ClientPlateStation s in UnityEngine.Object.FindObjectsOfType<ClientPlateStation>())
+            {
+                if (s == null) continue;
+                Vector3 d = s.transform.position - pc.transform.position;
+                d.y = 0f;
+                if (d.magnitude < bestD) { bestD = d.magnitude; best = s; }
+            }
+            if (best == null) return "no-plate-station";
+            Send("PickUp", pc.gameObject, best);
+            return "fetch-plate:" + best.name;
+        }
+
         /// <summary>Place the held item onto the chopping board nearest to
         /// (x,z) via its ClientAttachStation directly (no proximity scan).
         /// </summary>
