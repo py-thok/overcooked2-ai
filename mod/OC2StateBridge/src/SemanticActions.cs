@@ -109,6 +109,21 @@ namespace OC2StateBridge
                     return "place-into:" + pot.name;
                 }
             }
+            // Plate-lock: nori/chopped fillings belong ON a plate. Same
+            // direct-event pattern as the pot-lock — the scan's placement
+            // referral near cluttered counters is unreliable, and assembly
+            // (deepest plate observed: rice only) cannot be trained without
+            // a deterministic add-to-plate path.
+            bool isPlateFood = held.name == "Seaweed" || held.name.StartsWith("Chopped");
+            if (isPlateFood)
+            {
+                ClientPlacementContainer plate = FindNearestPlateContainer(pc.transform.position, 3.0f);
+                if (plate != null)
+                {
+                    Send("Place", pc.gameObject, plate);
+                    return "place-onto:" + plate.name;
+                }
+            }
             IClientHandlePlacement ihp = objs.m_iHandlePlacement;
             if (ihp != null)
             {
@@ -119,30 +134,47 @@ namespace OC2StateBridge
             return "drop";
         }
 
-        private static ClientPlacementContainer[] _potCache;
-        private static float _potCacheTime;
+        private static ClientPlacementContainer[] _containerCache;
+        private static float _containerCacheTime;
+
+        /// <summary>All ClientPlacementContainer in the scene, rescanned at
+        /// most every 2s. Positions are re-read per query (plates move).</summary>
+        private static ClientPlacementContainer[] ContainerCache()
+        {
+            if (_containerCache == null || Time.time > _containerCacheTime)
+            {
+                _containerCache = UnityEngine.Object.FindObjectsOfType<ClientPlacementContainer>();
+                _containerCacheTime = Time.time + 2f;
+            }
+            return _containerCache;
+        }
 
         /// <summary>Nearest pot's placement container within maxDist of pos,
-        /// or null. Component scan cached for 2s.</summary>
+        /// or null.</summary>
         private static ClientPlacementContainer FindNearestPotContainer(Vector3 pos, float maxDist)
         {
-            if (_potCache == null || Time.time > _potCacheTime)
-            {
-                ClientPlacementContainer[] all = UnityEngine.Object.FindObjectsOfType<ClientPlacementContainer>();
-                System.Collections.Generic.List<ClientPlacementContainer> pots =
-                    new System.Collections.Generic.List<ClientPlacementContainer>();
-                foreach (ClientPlacementContainer c in all)
-                {
-                    if (c != null && c.name.Contains("pot")) pots.Add(c);
-                }
-                _potCache = pots.ToArray();
-                _potCacheTime = Time.time + 2f;
-            }
             ClientPlacementContainer best = null;
             float bestD = maxDist;
-            foreach (ClientPlacementContainer c in _potCache)
+            foreach (ClientPlacementContainer c in ContainerCache())
+            {
+                if (c == null || !c.name.Contains("pot")) continue;
+                float d = Vector3.Distance(pos, c.transform.position);
+                if (d < bestD) { bestD = d; best = c; }
+            }
+            return best;
+        }
+
+        /// <summary>Nearest PLATE's placement container within maxDist of
+        /// pos, or null. Plate containers carry a Plate component in their
+        /// hierarchy.</summary>
+        private static ClientPlacementContainer FindNearestPlateContainer(Vector3 pos, float maxDist)
+        {
+            ClientPlacementContainer best = null;
+            float bestD = maxDist;
+            foreach (ClientPlacementContainer c in ContainerCache())
             {
                 if (c == null) continue;
+                if (c.GetComponentInParent<Plate>() == null) continue;
                 float d = Vector3.Distance(pos, c.transform.position);
                 if (d < bestD) { bestD = d; best = c; }
             }

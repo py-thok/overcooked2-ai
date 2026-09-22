@@ -27,6 +27,9 @@ SUSHI_1_4 = {
     # cooked-rice window almost never aligned with a fetched plate)
     "rice_crate": (8.4, 0.0, -2.4),
     "rice_stand": (8.4, -3.6),        # below the crate, next to P0's spawn
+    # SEAWEED crate (probe-verified by fetch): nori goes straight onto a
+    # plate, no chopping. (Both x=8.4 crates were long mislabeled as rice.)
+    "seaweed_crate": (8.4, 0.0, -1.2),
     "rice_cooker": (22.8, 0.0, -4.8), # middle cooker
     "rice_pot_stand": (22.8, -6.0),   # south of that cooker
     # plate preload: P0 spawns holding an empty plate (scoop_stance stayed
