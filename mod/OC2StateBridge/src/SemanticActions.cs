@@ -91,11 +91,16 @@ namespace OC2StateBridge
             // scan: the scan resolves the cooker station whose referral logic
             // fails intermittently (~50%), leaving the chef holding the item.
             // Direct placement into the container is deterministic.
-            // RICE ONLY: pots cook rice; nori/chopped fillings go on plates.
-            // Without this gate the lock hijacked seaweed near a cooker and
-            // the pot's rejection dropped it on the floor.
+            // RICE: pots cook rice; nori/chopped fillings go on plates.
+            // PLATE: ServerPlacementContainer.CanHandlePlacement reverse-
+            // combines — the pot POURS its cooked contents into the held
+            // plate (the scoop!). The scan often finds no placement handler
+            // for a plate (plate isn't placeable ON the pot), so INTERACT
+            // dropped the plate on the floor and plated could never be
+            // trained (probe run36: 3x interact, plate ended on the floor).
             bool isCookable = held.name.Contains("Rice") && !held.name.StartsWith("Chopped");
-            if (isCookable)
+            bool isPlate = held.GetComponent<Plate>() != null;
+            if (isCookable || isPlate)
             {
                 ClientPlacementContainer pot = FindNearestPotContainer(pc.transform.position, 3.0f);
                 if (pot != null)
