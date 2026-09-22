@@ -27,6 +27,11 @@ REWARD_WEIGHTS = {
     "plate_add": 0.3,     # any plate (held or on a surface) gained a content —
                           # assembly needs rice+nori+filling; plating only the
                           # first content left additions 2/3 unrewarded
+    "plate_waste": -0.2,  # per plate-food item LOST without a score increase
+                          # (partial plates carried to the hatch score 0 and
+                          # the food vanishes; observed: rice plates delivered
+                          # at 1 content). Legit serves (score delta > 0)
+                          # exempt — the clamp must not punish delivery.
     "board_add": 0.3,     # raw filling placed on a chopping board
     "chop_prog": 0.5,     # per unit of chop progress on a board (dense;
                           # "chopped" only fires when the item is picked up,
@@ -129,7 +134,8 @@ def compute_reward(prev, cur, ctx):
     W = REWARD_WEIGHTS
     parts = {"score": 0.0, "pot_add": 0.0, "pot_start": 0.0, "pot_cooked": 0.0,
              "held_ing": 0.0, "held_utensil": 0.0, "held_plate": 0.0,
-             "chopped": 0.0, "plated": 0.0, "plate_add": 0.0, "board_add": 0.0, "chop_prog": 0.0,
+             "chopped": 0.0, "plated": 0.0, "plate_add": 0.0, "plate_waste": 0.0,
+             "board_add": 0.0, "chop_prog": 0.0,
              "chop_done": 0.0, "chop_stance": 0.0, "scoop_stance": 0.0, "floor_drop": 0.0, "nav": 0.0,
              "metric_pickup_ing": 0.0}
     pr, cr = prev.get("round", {}), cur.get("round", {})
@@ -149,11 +155,14 @@ def compute_reward(prev, cur, ctx):
         parts["chop_prog"] += W["chop_prog"] * (cur_sum - prev_sum)
     if prev_max < 0.99 <= cur_max:
         parts["chop_done"] += W["chop_done"]
-    # assembly: total contents across ALL plates (held + surfaces). Serving
-    # drops the sum — clamp to positive deltas so serving never punishes.
+    # assembly: total contents across ALL plates (held + surfaces). A drop
+    # WITHOUT a score increase means the food was wasted (partial serve,
+    # binned plate) — penalize it; a legit serve pays through score instead.
     plate_delta = _total_plate_contents(cur) - _total_plate_contents(prev)
     if plate_delta > 0:
         parts["plate_add"] += W["plate_add"] * plate_delta
+    elif plate_delta < 0 and parts["score"] == 0.0:
+        parts["plate_waste"] += W["plate_waste"] * (-plate_delta)
     # pot pipeline (contents added / cooking progressed / cooked)
     prev_pots = {tuple(c["grid"]): c for c in prev.get("cookers", []) if c.get("grid")}
     for c in cur.get("cookers", []):
