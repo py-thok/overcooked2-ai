@@ -21,6 +21,7 @@ namespace OC2StateBridge
     {
         private StateServer _server;
         private float _nextDebugLog;
+        private float _nextJanitor;
 
         private void Awake()
         {
@@ -45,6 +46,12 @@ namespace OC2StateBridge
             InputInjector.EnsureHooked(Logger);
             _server.DrainActions(DispatchCommand);
             EnvControl.TickPendingLoad(Logger);
+
+            if (Time.time >= _nextJanitor)
+            {
+                _nextJanitor = Time.time + 2f;
+                Janitor.KeepPotsFresh(Logger);
+            }
 
             if (Input.GetKeyDown(KeyCode.F9))
             {
