@@ -10,7 +10,7 @@ import os
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from nav import board_items, nav_targets
+from nav import board_items, nav_targets, plate_food_count
 
 REWARD_WEIGHTS = {
     "score": 0.05,        # per score point (served dish = ~20-40 pts)
@@ -89,15 +89,17 @@ def nearest_dist(pos, targets):
 
 
 def _total_plate_contents(st):
-    """Total ingredient count across every visible plate (held + loose)."""
+    """Total RECIPE-RELEVANT ingredient count across every visible plate
+    (held + loose). Nested composite nodes are flattened and raw
+    ingredients excluded — anything else rewards plate-poisoning."""
     total = 0
     for p in st.get("players", []):
         h = p.get("held")
         if h and h.get("is_plate"):
-            total += len(h.get("contents") or [])
+            total += plate_food_count(h.get("contents"))
     for it in st.get("items", []):
         if it.get("kind") == "plate":
-            total += len(it.get("contents") or [])
+            total += plate_food_count(it.get("contents"))
     return total
 
 
@@ -172,10 +174,11 @@ def compute_reward(prev, cur, ctx):
     plate_items = [i for i in cur.get("items", [])
                    if i.get("kind") == "plate" and i.get("pos")]
     plates_pos = [i["pos"] for i in plate_items] or [ctx["plate_station"]]
-    fullest = max(plate_items, key=lambda i: len(i.get("contents") or []),
+    fullest = max(plate_items, key=lambda i: plate_food_count(i.get("contents")),
                   default=None)
     plates_best = ([fullest["pos"]]
-                   if fullest is not None and fullest.get("contents") else None)
+                   if fullest is not None and plate_food_count(fullest.get("contents")) > 0
+                   else None)
     # held-item transitions (symmetric so pick/drop cycling nets 0)
     pp, cp = prev.get("players", []), cur.get("players", [])
     for i in range(min(len(pp), len(cp))):

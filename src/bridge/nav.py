@@ -19,6 +19,35 @@ def is_choppable(name):
             and name not in ("Seaweed", "SushiRice"))
 
 
+def content_names(contents):
+    """Flatten nested contents nodes -> ingredient names.
+
+    Plate contents serialize as ONE CookedCompositeAssembledNode wrapper
+    whose CHILDREN carry the names — len(contents) counts the wrapper, not
+    the food. A complete sushi (rice+nori+filling) looked like "1 content",
+    which silently broke serve routing (nav), assembly rewards and the
+    plate-contents observation feature."""
+    names = []
+    for n in (contents or []):
+        if not isinstance(n, dict):
+            continue
+        if n.get("name"):
+            names.append(n["name"])
+        for c in (n.get("children") or []):
+            if isinstance(c, dict) and c.get("name"):
+                names.append(c["name"])
+    return names
+
+
+def plate_food_count(contents):
+    """Recipe-relevant items on a plate: rice, nori, chopped fillings.
+    Raw ingredients (un-chopped cucumber/fish) on a plate are recipe-dead
+    and must not count toward assembly rewards or routing — paying for
+    them taught the policy to poison plates (observed: ['Cucumber'])."""
+    return sum(1 for n in content_names(contents)
+               if n in ("SushiRice", "Seaweed") or n.startswith("Chopped"))
+
+
 def board_items(items, chop_boards):
     """Positions of chopping boards holding a raw choppable ingredient."""
     busy = []
@@ -56,12 +85,12 @@ def nav_targets(held, cookers, plates_pos, boards_busy, ctx, plates_best=None):
         return ctx["crates"], 0.01
     name = held.get("name") or ""
     if held.get("is_plate"):
-        contents = held.get("contents") or []
-        if len(contents) >= 3:
+        n_food = plate_food_count(held.get("contents"))
+        if n_food >= 3:
             # complete sushi: ClientPlateStation (the plate station doubles
             # as the delivery hatch — CanAddItem placement triggers delivery)
             return [ctx["plate_station"]], 0.02
-        if contents:
+        if n_food >= 1:
             # partial plate: carrying it to the hatch delivers nothing.
             # Head for the crates so the chef can put it down and fetch
             # the missing ingredients.

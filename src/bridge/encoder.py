@@ -22,8 +22,12 @@ Globals vector v1: [time_remaining_norm, score_norm,
 import json
 import os
 import re
+import sys
 
 import numpy as np
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from nav import content_names
 
 N_CHANNELS = 14
 MAX_ORDERS = 6
@@ -119,7 +123,8 @@ class ObsEncoder:
                 held = players[i].get("held")
             g += _held_onehot(held["name"] if held else None)
             # plate contents matter: empty plate vs loaded plate look the same by name
-            n_contents = len(held.get("contents") or []) if held else 0
+            # (flattened — plate contents nest inside one composite wrapper node)
+            n_contents = len(content_names(held.get("contents"))) if held else 0
             g.append(min(n_contents, 4) / 4.0)
         orders = st.get("orders", [])[:MAX_ORDERS]
         for k in range(MAX_ORDERS):
