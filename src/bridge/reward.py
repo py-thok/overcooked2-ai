@@ -20,18 +20,25 @@ REWARD_WEIGHTS = {
     "held_ing": 0.05,     # symmetric: +pickup / -putdown (pot_add nets +)
     "held_utensil": -0.1, # grabbed a pot/extinguisher
     "held_plate": 0.05,   # symmetric: +took / -put down
-    "chopped": 0.5,       # held item became Chopped*
-    "plated": 1.0,        # held plate gained its first contents (0.6->1.0:
-                          # scoop conversion stalled at ~1/8 of stances;
-                          # must clearly out-earn standing at the pot)
+    "chopped": 1.0,       # held item became Chopped* (0.5->1.0: chopping
+                          # boycotted for 3h — chop_done 0/50 — because the
+                          # scoop-churn loop out-paid it; completion-only,
+                          # cannot be farmed without real chopped output)
+    "plated": 0.6,        # held plate gained its first contents (1.0->0.6:
+                          # scooping is over-learned — plated hit 7/rollout,
+                          # plates churn scoop->dump->rescope because emptying
+                          # resets "first contents". The churn cycle must not
+                          # out-earn a real serve)
     "plate_add": 0.3,     # any plate (held or on a surface) gained a content —
                           # assembly needs rice+nori+filling; plating only the
                           # first content left additions 2/3 unrewarded
-    "plate_waste": -0.2,  # per plate-food item LOST without a score increase
-                          # (partial plates carried to the hatch score 0 and
-                          # the food vanishes; observed: rice plates delivered
-                          # at 1 content). Legit serves (score delta > 0)
-                          # exempt — the clamp must not punish delivery.
+    "plate_waste": -1.0,  # per plate-food item LOST without a score increase.
+                          # -0.2->-1.0: churn economics. A scoop->dump cycle
+                          # earned plated+plate_add-waste = +1.1 at -0.2, so
+                          # dumping was rational (waste kept climbing:
+                          # -0.56 -> -0.79). At -1.0 a churn cycle nets
+                          # 0.6+0.3-1.0 < 0 while a real 3-layer serve keeps
+                          # ~+3.5 (adds+complete+score).
     "plate_complete": 1.0, # a plate reaching 3 recipe items (rice+nori+
                           # chopped filling = a servable sushi). 2-layer
                           # plates (rice+nori) appeared in run42 but the 3rd
