@@ -32,13 +32,23 @@ REWARD_WEIGHTS = {
                           # the food vanishes; observed: rice plates delivered
                           # at 1 content). Legit serves (score delta > 0)
                           # exempt — the clamp must not punish delivery.
+    "plate_complete": 1.0, # a plate reaching 3 recipe items (rice+nori+
+                          # chopped filling = a servable sushi). 2-layer
+                          # plates (rice+nori) appeared in run42 but the 3rd
+                          # layer starves: scooping pays ~1.3 per INTERACT
+                          # while a full chop pays ~1.5 over ~20 use-hold
+                          # steps, so the policy rationally skips chopping —
+                          # yet orders are undeliverable without it.
     "board_add": 0.3,     # raw filling placed on a chopping board
     "chop_prog": 0.5,     # per unit of chop progress on a board (dense;
                           # "chopped" only fires when the item is picked up,
                           # so without this chop completion is invisible)
-    "chop_done": 0.5,     # a board item's progress crossing ~1.0 — finishing
+    "chop_done": 0.8,     # a board item's progress crossing ~1.0 — finishing
                           # the chop pays immediately, not only on pickup
-                          # (partial-chop farming otherwise beats finishing)
+                          # (partial-chop farming otherwise beats finishing).
+                          # 0.5->0.8: run42 collapsed chopping (chop_done 0/50
+                          # for 2h) — per-effort it lost to scooping, but the
+                          # 3rd plate layer is undeliverable without it.
     "chop_stance": 0.0,   # RETIRED (0): scaffolding from before chop_prog —
                           # policy became a stance farmer (mean +31/rollout,
                           # 50/50, entropy collapsed to 2.1, plated 0/50).
@@ -93,19 +103,24 @@ def nearest_dist(pos, targets):
     return min((pos[0] - t[0]) ** 2 + (pos[2] - t[2]) ** 2 for t in targets) ** 0.5
 
 
+def _plate_food_counts(st):
+    """Per-plate recipe-food counts (held + loose)."""
+    counts = []
+    for p in st.get("players", []):
+        h = p.get("held")
+        if h and h.get("is_plate"):
+            counts.append(plate_food_count(h.get("contents")))
+    for it in st.get("items", []):
+        if it.get("kind") == "plate":
+            counts.append(plate_food_count(it.get("contents")))
+    return counts
+
+
 def _total_plate_contents(st):
     """Total RECIPE-RELEVANT ingredient count across every visible plate
     (held + loose). Nested composite nodes are flattened and raw
     ingredients excluded — anything else rewards plate-poisoning."""
-    total = 0
-    for p in st.get("players", []):
-        h = p.get("held")
-        if h and h.get("is_plate"):
-            total += plate_food_count(h.get("contents"))
-    for it in st.get("items", []):
-        if it.get("kind") == "plate":
-            total += plate_food_count(it.get("contents"))
-    return total
+    return sum(_plate_food_counts(st))
 
 
 def _board_chop_stats(items, chop_boards):
@@ -135,7 +150,7 @@ def compute_reward(prev, cur, ctx):
     parts = {"score": 0.0, "pot_add": 0.0, "pot_start": 0.0, "pot_cooked": 0.0,
              "held_ing": 0.0, "held_utensil": 0.0, "held_plate": 0.0,
              "chopped": 0.0, "plated": 0.0, "plate_add": 0.0, "plate_waste": 0.0,
-             "board_add": 0.0, "chop_prog": 0.0,
+             "plate_complete": 0.0, "board_add": 0.0, "chop_prog": 0.0,
              "chop_done": 0.0, "chop_stance": 0.0, "scoop_stance": 0.0, "floor_drop": 0.0, "nav": 0.0,
              "metric_pickup_ing": 0.0}
     pr, cr = prev.get("round", {}), cur.get("round", {})
@@ -163,6 +178,10 @@ def compute_reward(prev, cur, ctx):
         parts["plate_add"] += W["plate_add"] * plate_delta
     elif plate_delta < 0 and parts["score"] == 0.0:
         parts["plate_waste"] += W["plate_waste"] * (-plate_delta)
+    # a plate reaching a servable 3 items (crossing, not per-step)
+    if (max(_plate_food_counts(prev), default=0) < 3
+            <= max(_plate_food_counts(cur), default=0)):
+        parts["plate_complete"] += W["plate_complete"]
     # pot pipeline (contents added / cooking progressed / cooked)
     prev_pots = {tuple(c["grid"]): c for c in prev.get("cookers", []) if c.get("grid")}
     for c in cur.get("cookers", []):
