@@ -21,8 +21,9 @@ REWARD_WEIGHTS = {
     "held_utensil": -0.1, # grabbed a pot/extinguisher
     "held_plate": 0.05,   # symmetric: +took / -put down
     "chopped": 0.5,       # held item became Chopped*
-    "plated": 0.6,        # held plate gained its first contents (0.3->0.6:
-                          # the scoop link was starved by stance farming)
+    "plated": 1.0,        # held plate gained its first contents (0.6->1.0:
+                          # scoop conversion stalled at ~1/8 of stances;
+                          # must clearly out-earn standing at the pot)
     "plate_add": 0.3,     # any plate (held or on a surface) gained a content —
                           # assembly needs rice+nori+filling; plating only the
                           # first content left additions 2/3 unrewarded
@@ -37,9 +38,10 @@ REWARD_WEIGHTS = {
                           # policy became a stance farmer (mean +31/rollout,
                           # 50/50, entropy collapsed to 2.1, plated 0/50).
                           # Dense progress + completion carry chopping now.
-    "scoop_stance": 0.05, # per step: empty plate in hand next to a cooked pot
-                          # (rice now cooks every episode via preload, but
-                          # plated stayed ~1/50 — nobody brought a plate)
+    "scoop_stance": 0.02, # per step: empty plate in hand next to a cooked pot
+                          # (0.05->0.02: same farming shape as chop_stance —
+                          # stance climbed 27/50 while plated conversion
+                          # stayed ~1/8; guidance yes, destination no)
     "floor_drop": -0.05,  # ingredient dropped on the floor (anti-churn)
 }
 
