@@ -110,19 +110,18 @@ namespace OC2StateBridge
                 }
             }
             // PLATE scoop-lock: pour the pot's COOKED contents into the held
-            // plate. Two gates, both learned from observation:
-            // 1. pot must HOLD food — otherwise every INTERACT near any pot
-            //    container (chefs carry pots around constantly) poured the
-            //    plate's freshly scooped rice back into a loose pot on a
-            //    random counter: rice left the plate (plate_waste fired)
-            //    into an unobservable, unrecoverable sink.
-            // 2. contents must be COOKED (Cooked* node) — pouring raw rice
-            //    onto a plate poisons it (undeliverable, but counted as
-            //    plate food until served).
+            // plate. Gate on a cooking handler near the pot reporting
+            // IsCooked() — contents alone are wrong twice over: an EMPTY pot
+            // let INTERACT pour the plate's freshly scooped rice back into
+            // loose pots being carried around (rice vanished into an
+            // unobservable sink), and a COOKING pot would pour RAW rice onto
+            // the plate (undeliverable). Note cooked pot rice stays an
+            // IngredientAssembledNode (the Cooked* composite only appears on
+            // plates), so node-type sniffing cannot detect doneness.
             if (isPlate)
             {
                 ClientPlacementContainer pot = FindNearestPotContainer(pc.transform.position, 3.0f);
-                if (pot != null && PotHasCookedFood(pot))
+                if (pot != null && PotIsScoopable(pot))
                 {
                     Send("Place", pc.gameObject, pot);
                     return "place-into:" + pot.name;
@@ -200,24 +199,21 @@ namespace OC2StateBridge
             return best;
         }
 
-        /// <summary>True if the pot behind this container holds COOKED food
-        /// (a scoop would transfer something servable). Cooked contents are
-        /// CookedCompositeAssembledNode; raw rice sitting in a pot is an
-        /// ingredient node and fails the gate.</summary>
-        private static bool PotHasCookedFood(ClientPlacementContainer pot)
+        /// <summary>True if a cooking handler co-located with this pot
+        /// reports IsCooked() — i.e. a scoop would transfer cooked food.
+        /// Loose/carried pots have no handler nearby and are never
+        /// scoopable (also discourages the pot-carrying churn).</summary>
+        private static bool PotIsScoopable(ClientPlacementContainer pot)
         {
-            try
+            foreach (ServerCookingHandler h in ServerCookingHandler.GetCookingHandlers())
             {
-                IIngredientContents ic = pot.gameObject.RequestInterface<IIngredientContents>();
-                AssembledDefinitionNode[] contents = ic != null ? ic.GetContents() : null;
-                if (contents == null) return false;
-                foreach (AssembledDefinitionNode n in contents)
-                {
-                    if (n != null && n.GetType().Name.StartsWith("Cooked")) return true;
-                }
-                return false;
+                if (h == null) continue;
+                Vector3 d = h.transform.position - pot.transform.position;
+                d.y = 0f;
+                if (d.magnitude > 1.0f) continue;
+                try { return h.IsCooked(); } catch { return false; }
             }
-            catch { return false; }
+            return false;
         }
 
         /// <summary>Throw the held item (game's own throw event).</summary>
