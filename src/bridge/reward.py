@@ -110,15 +110,31 @@ def nearest_dist(pos, targets):
     return min((pos[0] - t[0]) ** 2 + (pos[2] - t[2]) ** 2 for t in targets) ** 0.5
 
 
+def _held_names(st):
+    """Names of items currently in a player's hand. The items[] scan
+    (PhysicalAttachment, 0.3s refresh) INCLUDES held items — they attach to
+    the player's hand — so without this exclusion every loaded plate counts
+    twice while carried: phantom plate_add on pickup, phantom plate_waste
+    on putdown (observed: every 'loss' event was a world+held pair at the
+    same position — one plate, not two)."""
+    names = set()
+    for p in st.get("players", []):
+        h = p.get("held")
+        if h and h.get("name"):
+            names.add(h["name"])
+    return names
+
+
 def _plate_food_counts(st):
-    """Per-plate recipe-food counts (held + loose)."""
+    """Per-plate recipe-food counts (held + loose), held plates counted once."""
+    held = _held_names(st)
     counts = []
     for p in st.get("players", []):
         h = p.get("held")
         if h and h.get("is_plate"):
             counts.append(plate_food_count(h.get("contents")))
     for it in st.get("items", []):
-        if it.get("kind") == "plate":
+        if it.get("kind") == "plate" and it.get("name") not in held:
             counts.append(plate_food_count(it.get("contents")))
     return counts
 
@@ -131,13 +147,20 @@ def _total_plate_contents(st):
 
 
 def _pot_rice_count(st):
-    """Rice sitting in ANY pot (loose utensils + pots on burners). Rice in
-    a pot still exists: plate->pot pours must not count as food waste."""
+    """Rice sitting in ANY pot, each pot counted once. A pot on a burner
+    appears in BOTH cookers[] and items[] (dedup by cooker proximity); a
+    carried pot appears only via its items[] ghost (players[].held also
+    carries contents, so counting items-only avoids that double-count)."""
     total = 0
+    cooker_pos = [c["pos"] for c in st.get("cookers", []) if c.get("pos")]
     for it in st.get("items", []):
-        if it.get("kind") == "utensil":
-            total += sum(1 for n in content_names(it.get("contents"))
-                         if n == "SushiRice")
+        if it.get("kind") != "utensil" or not it.get("pos"):
+            continue
+        if any(abs(it["pos"][0] - cp[0]) < 1.0 and abs(it["pos"][2] - cp[2]) < 1.0
+               for cp in cooker_pos):
+            continue  # on a burner — counted via cookers[] below
+        total += sum(1 for n in content_names(it.get("contents"))
+                     if n == "SushiRice")
     for c in st.get("cookers", []):
         total += sum(1 for n in content_names(c.get("contents"))
                      if n == "SushiRice")
