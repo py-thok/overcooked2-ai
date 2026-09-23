@@ -312,6 +312,12 @@ class OC2Env:
         st = self.cli.get_state()
         reward, parts = compute_reward(self._prev, st, self._reward_ctx)
         self._steps += 1
+        # A post-round read (results screen / level unloaded) has no items —
+        # diffing it against the last in-round state makes every plate's food
+        # "vanish", firing plate_waste for the round-end wipe. That penalty
+        # is policy-independent (observed: constant ~-4.2/rollout, zero
+        # adaptation over 2h). Zero it like the score-reset handling below.
+        post_round_read = not st.get("in_round")
         # Round boundary detection. The flow controller can flicker null
         # mid-round (false in_round=False), and scene reload can swallow the
         # in_round=False window entirely (main thread busy) — so candidates
@@ -332,6 +338,10 @@ class OC2Env:
             # score reset 0 with the new round is not a penalty
             reward -= parts["score"]
             parts["score"] = 0.0
+        if (post_round_read or round_restarted) and parts.get("plate_waste", 0.0) < 0.0:
+            # round-end item wipe is not food waste (see above)
+            reward -= parts["plate_waste"]
+            parts["plate_waste"] = 0.0
         if not done:
             # Last ~20 game-seconds no pipeline link can complete (cooking
             # alone takes that long), so under the shaping any action only
