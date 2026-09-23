@@ -247,8 +247,12 @@ namespace OC2StateBridge
                 w.Key("kind"); w.Value(ClassifyItem(go));
                 // plates report their contents even on counters/floor —
                 // "plate gained an ingredient" must be visible wherever the
-                // plate sits, or assembly (rice+nori+filling) is unshapable
-                if (go.GetComponent<Plate>() != null)
+                // plate sits, or assembly (rice+nori+filling) is unshapable.
+                // Pots (utensils) too: chefs carry pots off the burners, and
+                // rice inside a loose pot was vanishing from every observable
+                // channel — reward counted it as wasted while it sat in a pot
+                // on a random counter.
+                if (go.GetComponent<Plate>() != null || go.GetComponent<CookableContainer>() != null)
                 {
                     w.Key("contents"); WriteContents(w, go);
                 }

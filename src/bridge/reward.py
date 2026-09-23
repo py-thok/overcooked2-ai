@@ -10,7 +10,7 @@ import os
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from nav import board_items, nav_targets, plate_food_count
+from nav import board_items, nav_targets, plate_food_count, content_names
 
 REWARD_WEIGHTS = {
     "score": 0.05,        # per score point (served dish = ~20-40 pts)
@@ -130,6 +130,20 @@ def _total_plate_contents(st):
     return sum(_plate_food_counts(st))
 
 
+def _pot_rice_count(st):
+    """Rice sitting in ANY pot (loose utensils + pots on burners). Rice in
+    a pot still exists: plate->pot pours must not count as food waste."""
+    total = 0
+    for it in st.get("items", []):
+        if it.get("kind") == "utensil":
+            total += sum(1 for n in content_names(it.get("contents"))
+                         if n == "SushiRice")
+    for c in st.get("cookers", []):
+        total += sum(1 for n in content_names(c.get("contents"))
+                     if n == "SushiRice")
+    return total
+
+
 def _board_chop_stats(items, chop_boards):
     """(sum, max) of work_progress (0..1) over items on chopping boards."""
     total, best = 0.0, 0.0
@@ -177,14 +191,18 @@ def compute_reward(prev, cur, ctx):
         parts["chop_prog"] += W["chop_prog"] * (cur_sum - prev_sum)
     if prev_max < 0.99 <= cur_max:
         parts["chop_done"] += W["chop_done"]
-    # assembly: total contents across ALL plates (held + surfaces). A drop
-    # WITHOUT a score increase means the food was wasted (partial serve,
-    # binned plate) — penalize it; a legit serve pays through score instead.
+    # assembly: total contents across ALL plates (held + surfaces). Waste is
+    # judged on plate food + pot rice together: a plate->pot pour keeps the
+    # rice (re-scoopable), only food that leaves BOTH is truly wasted
+    # (partial serves, binning) — unless score increased (legit serve).
     plate_delta = _total_plate_contents(cur) - _total_plate_contents(prev)
     if plate_delta > 0:
         parts["plate_add"] += W["plate_add"] * plate_delta
-    elif plate_delta < 0 and parts["score"] == 0.0:
-        parts["plate_waste"] += W["plate_waste"] * (-plate_delta)
+    else:
+        food_delta = (plate_delta
+                      + _pot_rice_count(cur) - _pot_rice_count(prev))
+        if food_delta < 0 and parts["score"] == 0.0:
+            parts["plate_waste"] += W["plate_waste"] * (-food_delta)
     # a plate reaching a servable 3 items (crossing, not per-step)
     if (max(_plate_food_counts(prev), default=0) < 3
             <= max(_plate_food_counts(cur), default=0)):

@@ -100,10 +100,29 @@ namespace OC2StateBridge
             // trained (probe run36: 3x interact, plate ended on the floor).
             bool isCookable = held.name.Contains("Rice") && !held.name.StartsWith("Chopped");
             bool isPlate = held.GetComponent<Plate>() != null;
-            if (isCookable || isPlate)
+            if (isCookable)
             {
                 ClientPlacementContainer pot = FindNearestPotContainer(pc.transform.position, 3.0f);
                 if (pot != null)
+                {
+                    Send("Place", pc.gameObject, pot);
+                    return "place-into:" + pot.name;
+                }
+            }
+            // PLATE scoop-lock: pour the pot's COOKED contents into the held
+            // plate. Two gates, both learned from observation:
+            // 1. pot must HOLD food — otherwise every INTERACT near any pot
+            //    container (chefs carry pots around constantly) poured the
+            //    plate's freshly scooped rice back into a loose pot on a
+            //    random counter: rice left the plate (plate_waste fired)
+            //    into an unobservable, unrecoverable sink.
+            // 2. contents must be COOKED (Cooked* node) — pouring raw rice
+            //    onto a plate poisons it (undeliverable, but counted as
+            //    plate food until served).
+            if (isPlate)
+            {
+                ClientPlacementContainer pot = FindNearestPotContainer(pc.transform.position, 3.0f);
+                if (pot != null && PotHasCookedFood(pot))
                 {
                     Send("Place", pc.gameObject, pot);
                     return "place-into:" + pot.name;
@@ -179,6 +198,26 @@ namespace OC2StateBridge
                 if (d < bestD) { bestD = d; best = c; }
             }
             return best;
+        }
+
+        /// <summary>True if the pot behind this container holds COOKED food
+        /// (a scoop would transfer something servable). Cooked contents are
+        /// CookedCompositeAssembledNode; raw rice sitting in a pot is an
+        /// ingredient node and fails the gate.</summary>
+        private static bool PotHasCookedFood(ClientPlacementContainer pot)
+        {
+            try
+            {
+                IIngredientContents ic = pot.gameObject.RequestInterface<IIngredientContents>();
+                AssembledDefinitionNode[] contents = ic != null ? ic.GetContents() : null;
+                if (contents == null) return false;
+                foreach (AssembledDefinitionNode n in contents)
+                {
+                    if (n != null && n.GetType().Name.StartsWith("Cooked")) return true;
+                }
+                return false;
+            }
+            catch { return false; }
         }
 
         /// <summary>Throw the held item (game's own throw event).</summary>
