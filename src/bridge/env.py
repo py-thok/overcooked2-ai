@@ -53,6 +53,7 @@ class OC2Env:
         self.time_limit = time_limit
         self.max_steps = max_steps
         self.cli = StateBridgeClient(port=port).connect()
+        self._rng = np.random.default_rng(port)  # per-instance deterministic
         self._enc = None
         self._prev = None
         self._steps = 0
@@ -219,11 +220,23 @@ class OC2Env:
 
             h0 = self._held_of(0) or {}
             n = len(content_names(h0.get("contents")))
+            # half the episodes park P0 (sushi in hand) right at the hatch:
+            # serve discovery = one INTERACT within 3m. The policy's
+            # 600k-step habit is "INTERACT with a loaded plate = it leaves
+            # my hand" (drop); nav alone (-0.45/rollout — chefs DRIFT AWAY
+            # from the hatch) wasn't overcoming it. The other half park at
+            # spawn so carrying-the-distance is still trained.
+            at_hatch = self._rng.random() < 0.5
+            if at_hatch and n >= 3:
+                hs = self.level["hatch_stand"]
+                self.cli.set_player_pos(hs[0], 0, hs[1], player=0)
+                time.sleep(0.15)
+            else:
+                self.cli.set_player_pos(spawn0[0], 0, spawn0[1], player=0)
+                time.sleep(0.15)
             print(f"sushi preload: scoop=True seaweed={seaweed_ok} "
-                  f"chopped={chopped_ok} -> {n} contents")
-            # re-park: P0 back to spawn holding the sushi, P1 at board 1
-            self.cli.set_player_pos(spawn0[0], 0, spawn0[1], player=0)
-            time.sleep(0.15)
+                  f"chopped={chopped_ok} -> {n} contents"
+                  + (" (parked at hatch)" if at_hatch and n >= 3 else ""))
             # re-park P1 at board 1 (its chop-practice spot)
             bs = self.level["board_stand"]
             self.cli.set_player_pos(bs[0], 0, bs[1], player=1)

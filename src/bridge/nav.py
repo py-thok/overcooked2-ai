@@ -103,8 +103,10 @@ def nav_targets(held, cookers, plates_pos, boards_busy, ctx, plates_best=None,
         n_food = plate_food_count(held.get("contents"))
         if n_food >= 3:
             # complete sushi: ClientPlateStation (the plate station doubles
-            # as the delivery hatch — CanAddItem placement triggers delivery)
-            return [ctx["plate_station"]], 0.02
+            # as the delivery hatch — CanAddItem placement triggers delivery).
+            # 0.02->0.05: the ~10m carry must visibly out-earn the policy's
+            # old habits (nav ran -0.45/rollout — chefs drifted AWAY).
+            return [ctx["plate_station"]], 0.05
         if n_food >= 1:
             # partial plate: co-locate with a finished filling if one exists
             # (drop the plate next to it, then the same chef can fetch the
