@@ -41,11 +41,18 @@ def content_names(contents):
 
 def plate_food_count(contents):
     """Recipe-relevant items on a plate: rice, nori, chopped fillings.
-    Raw ingredients (un-chopped cucumber/fish) on a plate are recipe-dead
-    and must not count toward assembly rewards or routing — paying for
-    them taught the policy to poison plates (observed: ['Cucumber'])."""
+
+    NOTE on names: the assembled node for a chopped filling LOSES its
+    "Chopped" prefix — a complete sushi serializes as [SushiRice, Seaweed,
+    Cucumber] (serve probe: delivered +63, matched Sushi_Cucumber). Counting
+    only Chopped* made the 3rd layer invisible: plate_complete was
+    unreachable and nav never routed full plates to the hatch. Accepting
+    bare filling names here is safe because the mod REFUSES raw fillings
+    onto plates (drop-refuse-plate-poison) — bare "Cucumber"/"SushiFish" in
+    plate contents can only arrive chopped via the plate-lock."""
     return sum(1 for n in content_names(contents)
-               if n in ("SushiRice", "Seaweed") or n.startswith("Chopped"))
+               if n in ("SushiRice", "Seaweed", "Cucumber", "SushiFish")
+               or n.startswith("Chopped"))
 
 
 def board_items(items, chop_boards):
