@@ -308,9 +308,12 @@ def compute_reward(prev, cur, ctx):
                 parts["held_plate"] += W["held_plate"]           # took a plate
             elif p_plate and not c_plate:
                 parts["held_plate"] -= W["held_plate"]           # put the plate down
-        # plating: held plate gains its first contents (rice scooped on)
-        if (ch and ch.get("is_plate") and ch.get("contents")
-                and not (ph and ph.get("is_plate") and ph.get("contents"))):
+        # plating: an EMPTY held plate gains contents while held (the scoop).
+        # NOT "picked up an already-loaded plate" — that refires on every
+        # re-pickup of a loaded plate (observed: plated 9.6/rollout with
+        # plate_waste 0 — a pickup yo-yo, no food moved at all).
+        if (ph and ph.get("is_plate") and not ph.get("contents")
+                and ch and ch.get("is_plate") and ch.get("contents")):
             parts["plated"] += W["plated"]
         # navigation shaping: delta distance to the recipe-relevant target
         targets, w = nav_targets(ch, cur.get("cookers", []), plates_pos,
