@@ -199,12 +199,25 @@ def compute_reward(prev, cur, ctx):
              "metric_pickup_ing": 0.0}
     pr, cr = prev.get("round", {}), cur.get("round", {})
     parts["score"] = (cr.get("score", 0) - pr.get("score", 0)) * W["score"]
-    # chopping: raw filling placed on a board
+    # chopping: raw filling placed on a board. SYMMETRIC: removing a raw
+    # item from a board without a chop transform un-earns the placement —
+    # positive-only made board ping-pong (place b1, pick up, place b2, ...)
+    # an infinite +0.3 farm (observed run48: +4.1/rollout, 50/50, chopping
+    # dead). A raw item vanishing as a Chopped* appears IS the completion —
+    # exempt, or finishing a chop would be penalized.
     prev_boards = board_items(prev.get("items", []), ctx["chop_boards"])
     cur_boards = board_items(cur.get("items", []), ctx["chop_boards"])
     prev_board, cur_board = len(prev_boards), len(cur_boards)
-    if cur_board > prev_board:
-        parts["board_add"] += W["board_add"] * (cur_board - prev_board)
+    board_delta = cur_board - prev_board
+    if board_delta > 0:
+        parts["board_add"] += W["board_add"] * board_delta
+    elif board_delta < 0:
+        prev_chopped = sum(1 for i in prev.get("items", [])
+                           if (i.get("name") or "").startswith("Chopped"))
+        cur_chopped = sum(1 for i in cur.get("items", [])
+                          if (i.get("name") or "").startswith("Chopped"))
+        if cur_chopped <= prev_chopped:
+            parts["board_add"] += W["board_add"] * board_delta  # negative
     # dense chop progress: sum of work_progress over items on boards.
     # Positive deltas only — removing/losing an item must not claw reward
     # back, and the completion bonus comes from "chopped" on pickup.

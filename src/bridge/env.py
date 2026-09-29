@@ -342,6 +342,11 @@ class OC2Env:
             # round-end item wipe is not food waste (see above)
             reward -= parts["plate_waste"]
             parts["plate_waste"] = 0.0
+        if (post_round_read or round_restarted) and parts.get("board_add", 0.0) < 0.0:
+            # same wipe: raw fillings vanishing with the round are not
+            # ping-pong removals (symmetric board_add is the anti-farm)
+            reward -= parts["board_add"]
+            parts["board_add"] = 0.0
         if not done:
             # Last ~20 game-seconds no pipeline link can complete (cooking
             # alone takes that long), so under the shaping any action only
