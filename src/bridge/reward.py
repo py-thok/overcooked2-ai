@@ -65,6 +65,14 @@ REWARD_WEIGHTS = {
                           # stance climbed 27/50 while plated conversion
                           # stayed ~1/8; guidance yes, destination no)
     "floor_drop": -0.05,  # ingredient dropped on the floor (anti-churn)
+    "serve_stance": 0.02, # per step: holding a COMPLETE plate (>=3 recipe
+                          # foods) within 2.5m of the hatch. Not farmable:
+                          # the stance ends on serve (plate consumed) and
+                          # waste -1.0 punishes dumping. run59 parked chefs
+                          # at the hatch with sushi 48 times with zero
+                          # serves — the 600k-step habit never presses
+                          # INTERACT there; this holds them in place long
+                          # enough for the pickup press to be discovered.
 }
 
 # chop stance gate: must stand within this range and face the board
@@ -195,8 +203,8 @@ def compute_reward(prev, cur, ctx):
              "held_ing": 0.0, "held_utensil": 0.0, "held_plate": 0.0,
              "chopped": 0.0, "plated": 0.0, "plate_add": 0.0, "plate_waste": 0.0,
              "plate_complete": 0.0, "board_add": 0.0, "chop_prog": 0.0,
-             "chop_done": 0.0, "chop_stance": 0.0, "scoop_stance": 0.0, "floor_drop": 0.0, "nav": 0.0,
-             "metric_pickup_ing": 0.0}
+             "chop_done": 0.0, "chop_stance": 0.0, "scoop_stance": 0.0, "serve_stance": 0.0,
+             "floor_drop": 0.0, "nav": 0.0, "metric_pickup_ing": 0.0}
     pr, cr = prev.get("round", {}), cur.get("round", {})
     parts["score"] = (cr.get("score", 0) - pr.get("score", 0)) * W["score"]
     # chopping: raw filling placed on a board. SYMMETRIC: removing a raw
@@ -352,4 +360,11 @@ def compute_reward(prev, cur, ctx):
                     if d < _STANCE_MAX_DIST:
                         parts["scoop_stance"] += W["scoop_stance"]
                         break
+        # serve stance: complete plate in hand, at the hatch — the final
+        # action (INTERACT) is the only thing left to discover there
+        if ch and ch.get("is_plate") and plate_food_count(ch.get("contents")) >= 3:
+            pos = cp[i].get("pos")
+            hs = ctx["plate_station"]
+            if pos and abs(pos[0] - hs[0]) < 2.5 and abs(pos[2] - hs[2]) < 2.5:
+                parts["serve_stance"] += W["serve_stance"]
     return sum(v for k, v in parts.items() if not k.startswith("metric_")), parts
