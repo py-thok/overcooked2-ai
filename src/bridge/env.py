@@ -23,6 +23,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from state_client import StateBridgeClient
 from encoder import ObsEncoder
 from level_config import get_level
+from nav import content_names
 from reward import compute_reward
 
 # world (dx, dz) for the 9 moves
@@ -125,6 +126,89 @@ class OC2Env:
         self._preload_chopped()
         self._preload_rice()
         self._preload_plate()
+        self._preload_sushi()
+
+    def _preload_sushi(self):
+        """Assemble a COMPLETE sushi into P0's hand at spawn: scoop the
+        pre-cooked rice onto the preloaded plate, then P1 plate-locks the
+        seaweed and the pre-chopped cucumber onto the HELD plate (verified:
+        plate-lock works on plates held by the other chef).
+
+        Why: with every episode opening one INTERACT-at-hatch away from a
+        real score, serve discovery stops depending on the whole assembly
+        chain aligning by chance (plate_complete stayed 0/50 long after
+        every link was individually verified). The score reward (+3 per
+        sushi) then anchors credit backward along the chain. Costs ~10s
+        per reset; retire once serves are routine."""
+        pot_stand = self.level.get("rice_pot_stand")
+        spawn0 = self.level["spawn_spots"][0]
+        board2 = self.level["chop_boards"][1]
+        try:
+            # 1. P0 scoop: empty plate + cooked pot (both preloaded)
+            h0 = self._held_of(0) or {}
+            if not h0.get("is_plate"):
+                print("sushi preload: P0 has no plate, skipping")
+                return
+            if not any(c.get("is_cooked") for c in self.cli.get_state().get("cookers", [])):
+                print("sushi preload: no cooked rice, skipping")
+                return
+            self.cli.set_player_pos(pot_stand[0], 0, pot_stand[1], player=0)
+            time.sleep(0.4)
+            self.cli.interact(0)
+            time.sleep(0.8)
+            h0 = self._held_of(0) or {}
+            if "SushiRice" not in content_names(h0.get("contents")):
+                print("sushi preload: scoop failed, skipping")
+                self.cli.set_player_pos(spawn0[0], 0, spawn0[1], player=0)
+                return
+            # park P0 at spawn; assembly happens there (open floor, no pots)
+            self.cli.set_player_pos(spawn0[0], 0, spawn0[1], player=0)
+            time.sleep(0.3)
+
+            # 2. P1: seaweed -> add onto P0's held plate
+            for attempt in range(2):
+                if self._held_of(1):
+                    self.cli.throw_item(1)
+                    time.sleep(0.4)
+                self.cli.set_player_pos(8.4, 0, -3.6, player=1)
+                time.sleep(0.3)
+                self.cli.fetch_crate(1, 8.4, -1.2)
+                time.sleep(0.9)
+                if (self._held_of(1) or {}).get("name") == "Seaweed":
+                    break
+            if (self._held_of(1) or {}).get("name") == "Seaweed":
+                self.cli.set_player_pos(spawn0[0] + 1.5, 0, spawn0[1], player=1)
+                time.sleep(0.4)
+                self.cli.interact(1)   # plate-lock -> P0's held plate
+                time.sleep(0.8)
+
+            # 3. P1: pick up the pre-chopped cucumber from board 2, add it
+            b2stand = (board2[0], board2[2] - 1.2)
+            for attempt in range(3):
+                self.cli.set_player_pos(b2stand[0], 0, b2stand[1], player=1)
+                time.sleep(0.3)
+                self.cli.interact(1)
+                time.sleep(1.3)   # pickup animation — never teleport early
+                h1 = self._held_of(1) or {}
+                if (h1.get("name") or "").startswith("Chopped"):
+                    break
+            h1 = self._held_of(1) or {}
+            if (h1.get("name") or "").startswith("Chopped"):
+                self.cli.set_player_pos(spawn0[0] + 1.5, 0, spawn0[1], player=1)
+                time.sleep(0.4)
+                self.cli.interact(1)   # plate-lock again
+                time.sleep(0.8)
+
+            h0 = self._held_of(0) or {}
+            n = len(content_names(h0.get("contents")))
+            print(f"sushi preload: P0 plate has {n} contents")
+            # re-park P1 at board 1 (its chop-practice spot)
+            bs = self.level["board_stand"]
+            self.cli.set_player_pos(bs[0], 0, bs[1], player=1)
+            time.sleep(0.15)
+            self._face_north()
+        except Exception as e:
+            print(f"sushi preload failed ({e}); continuing without it")
 
     def _preload_chopped(self):
         """Scripted-chop a cucumber on board 2 at spawn, so every episode
