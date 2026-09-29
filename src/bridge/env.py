@@ -161,12 +161,17 @@ class OC2Env:
                 print("sushi preload: scoop failed, skipping")
                 self.cli.set_player_pos(spawn0[0], 0, spawn0[1], player=0)
                 return
-            # park P0 at spawn; assembly happens there (open floor, no pots)
-            self.cli.set_player_pos(spawn0[0], 0, spawn0[1], player=0)
+            # park P0 at the probe-verified assembly spot: open floor at
+            # (18,-7.5), P1 approaches to +1.5m east. Assembling at spawn
+            # failed: teleporting P1 to 1.5m off P0 next to the crate row
+            # collision-ejected P1 and both fillings landed on the floor.
+            ASM = (18.0, -7.5)
+            self.cli.set_player_pos(ASM[0], 0, ASM[1], player=0)
             time.sleep(0.3)
 
             # 2. P1: seaweed -> add onto P0's held plate
-            for attempt in range(2):
+            seaweed_ok = False
+            for attempt in range(3):
                 if self._held_of(1):
                     self.cli.throw_item(1)
                     time.sleep(0.4)
@@ -174,16 +179,21 @@ class OC2Env:
                 time.sleep(0.3)
                 self.cli.fetch_crate(1, 8.4, -1.2)
                 time.sleep(0.9)
-                if (self._held_of(1) or {}).get("name") == "Seaweed":
-                    break
-            if (self._held_of(1) or {}).get("name") == "Seaweed":
-                self.cli.set_player_pos(spawn0[0] + 1.5, 0, spawn0[1], player=1)
-                time.sleep(0.4)
+                if (self._held_of(1) or {}).get("name") != "Seaweed":
+                    continue
+                self.cli.set_player_pos(ASM[0] + 1.5, 0, ASM[1], player=1)
+                time.sleep(0.5)
                 self.cli.interact(1)   # plate-lock -> P0's held plate
-                time.sleep(0.8)
+                time.sleep(0.9)
+                h0c = content_names((self._held_of(0) or {}).get("contents"))
+                if "Seaweed" in h0c:
+                    seaweed_ok = True
+                    break
 
             # 3. P1: pick up the pre-chopped cucumber from board 2, add it
+            chopped_ok = False
             b2stand = (board2[0], board2[2] - 1.2)
+            got_chopped = False
             for attempt in range(3):
                 self.cli.set_player_pos(b2stand[0], 0, b2stand[1], player=1)
                 time.sleep(0.3)
@@ -191,17 +201,29 @@ class OC2Env:
                 time.sleep(1.3)   # pickup animation — never teleport early
                 h1 = self._held_of(1) or {}
                 if (h1.get("name") or "").startswith("Chopped"):
+                    got_chopped = True
                     break
-            h1 = self._held_of(1) or {}
-            if (h1.get("name") or "").startswith("Chopped"):
-                self.cli.set_player_pos(spawn0[0] + 1.5, 0, spawn0[1], player=1)
-                time.sleep(0.4)
-                self.cli.interact(1)   # plate-lock again
-                time.sleep(0.8)
+            if got_chopped:
+                for attempt in range(2):
+                    self.cli.set_player_pos(ASM[0] + 1.5, 0, ASM[1], player=1)
+                    time.sleep(0.5)
+                    self.cli.interact(1)   # plate-lock again
+                    time.sleep(0.9)
+                    h0c = content_names((self._held_of(0) or {}).get("contents"))
+                    if any(n.startswith("Chopped") or n in ("Cucumber", "SushiFish")
+                           for n in h0c):
+                        chopped_ok = True
+                        break
+                    if not ((self._held_of(1) or {}).get("name") or "").startswith("Chopped"):
+                        break  # lost the item; don't retry blind
 
             h0 = self._held_of(0) or {}
             n = len(content_names(h0.get("contents")))
-            print(f"sushi preload: P0 plate has {n} contents")
+            print(f"sushi preload: scoop=True seaweed={seaweed_ok} "
+                  f"chopped={chopped_ok} -> {n} contents")
+            # re-park: P0 back to spawn holding the sushi, P1 at board 1
+            self.cli.set_player_pos(spawn0[0], 0, spawn0[1], player=0)
+            time.sleep(0.15)
             # re-park P1 at board 1 (its chop-practice spot)
             bs = self.level["board_stand"]
             self.cli.set_player_pos(bs[0], 0, bs[1], player=1)
