@@ -146,13 +146,71 @@ namespace OC2StateBridge
                 }
             }
             IClientHandlePlacement ihp = objs.m_iHandlePlacement;
-            if (ihp != null)
+            MonoBehaviour mb = ihp as MonoBehaviour;
+            if (mb != null)
             {
-                Send("Place", pc.gameObject, ihp as MonoBehaviour);
-                return "place:" + ((ihp as MonoBehaviour) != null ? (ihp as MonoBehaviour).name : "?");
+                bool loadedPlate = isPlate && !PlateIsEmpty(held);
+                if (loadedPlate)
+                {
+                    // Loaded plates: hatch or floor, nothing else. The plate
+                    // STACK at the counters (13.2,-6.0) eats contents when a
+                    // loaded plate is placed on it (observed: every emptying
+                    // event happened exactly there, and plated yo-yo'd on the
+                    // refires). Scan placement is where that happens, so a
+                    // loaded plate bypasses the scan: direct serve when the
+                    // hatch is in reach (also fixes plate_return whiffs),
+                    // otherwise a safe floor drop (plates read fine there).
+                    ClientPlateStation hatch = FindNearestHatch(pc.transform.position, 3.0f);
+                    if (hatch != null)
+                    {
+                        Send("Place", pc.gameObject, hatch);
+                        return "serve:" + hatch.name;
+                    }
+                    Send("Take", pc.gameObject, (GameObject)null);
+                    return "drop-loaded-plate";
+                }
+                bool targetIsPlate = mb.GetComponentInParent<Plate>() != null;
+                bool heldRawFilling = !isCookable && !isPlateFood && !isPlate
+                    && !held.name.StartsWith("utensil_")
+                    && !held.name.StartsWith("equipment_")
+                    && !held.name.Contains("Rice");
+                if (targetIsPlate && heldRawFilling)
+                {
+                    // raw fillings on a plate are recipe-dead (poisoned
+                    // plate; observed: ['Cucumber'] plates). Refuse the
+                    // placement; a floor drop keeps the item usable.
+                    Send("Take", pc.gameObject, (GameObject)null);
+                    return "drop-refuse-plate-poison";
+                }
+                Send("Place", pc.gameObject, mb);
+                return "place:" + mb.name;
             }
             Send("Take", pc.gameObject, (GameObject)null);  // drop
             return "drop";
+        }
+
+        private static ClientPlateStation[] _hatchCache;
+        private static float _hatchCacheTime;
+
+        /// <summary>The serve hatch (workstation_plate_station — NOT
+        /// plate_return) within maxDist, or null.</summary>
+        private static ClientPlateStation FindNearestHatch(Vector3 pos, float maxDist)
+        {
+            if (_hatchCache == null || Time.time > _hatchCacheTime)
+            {
+                _hatchCache = UnityEngine.Object.FindObjectsOfType<ClientPlateStation>();
+                _hatchCacheTime = Time.time + 5f;
+            }
+            ClientPlateStation best = null;
+            float bestD = maxDist;
+            foreach (ClientPlateStation s in _hatchCache)
+            {
+                if (s == null || !s.name.Contains("plate_station")) continue;
+                Vector3 d = s.transform.position - pos;
+                d.y = 0f;
+                if (d.magnitude < bestD) { bestD = d.magnitude; best = s; }
+            }
+            return best;
         }
 
         private static ClientPlacementContainer[] _containerCache;
