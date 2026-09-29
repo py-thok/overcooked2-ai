@@ -121,8 +121,71 @@ class OC2Env:
         time.sleep(0.25)
         self._face_north()
         self._preload_chop_board()
+        self._preload_chopped()
         self._preload_rice()
         self._preload_plate()
+
+    def _preload_chopped(self):
+        """Scripted-chop a cucumber on board 2 at spawn, so every episode
+        opens with a READY chopped filling. The 3rd plate layer has been
+        supply-starved for hours (chop_done 0/50 across runs): the policy
+        unlearned use-hold chopping under the scoop-churn economy and
+        re-discovery from exploration alone is glacial. With a chopped item
+        on a board every episode, chopped pickup -> plate-lock ->
+        plate_complete -> serve becomes discoverable NOW, and the score
+        reward can pull the whole chop chain back up from the top.
+        Board 1 still gets the raw cucumber (chop practice stays available).
+        Speed-chops at 8x like the rice speed-cook; failure just skips."""
+        crate = self.level.get("cucumber_crate")
+        if not crate or len(self.level.get("chop_boards", [])) < 2:
+            return
+        board = self.level["chop_boards"][1]
+        stand = (board[0], board[2] - 1.2)
+        try:
+            got = False
+            for attempt in range(2):
+                if self._held_of(1):
+                    self.cli.throw_item(1)
+                    time.sleep(0.3)
+                self.cli.set_player_pos(crate[0], 0, crate[2] - 1.2, player=1)
+                time.sleep(0.3)
+                self.cli.fetch_crate(1, crate[0], crate[2])
+                time.sleep(0.7)
+                name = (self._held_of(1) or {}).get("name")
+                if name and self._is_choppable(name):
+                    got = True
+                    break
+            if not got:
+                print("chopped preload: no choppable, skipping")
+                return
+            self.cli.set_player_pos(stand[0], 0, stand[1], player=1)
+            time.sleep(0.3)
+            self.cli.place_board(1, board[0], board[2])
+            time.sleep(0.5)
+            # chop at 8x: use-hold until the item transforms (progress 0.99
+            # crossing isn't always observable; the Chopped* name is)
+            self.cli.set_timescale(8.0)
+            self.cli.send_action(player=1, use=True)
+            t0 = time.time()
+            done = False
+            while time.time() - t0 < 10:
+                time.sleep(0.4)
+                names = {it.get("name", "") for it in self.cli.get_state().get("items", [])}
+                if any(n.startswith("Chopped") for n in names):
+                    done = True
+                    break
+            self.cli.send_action(player=1, use=False)
+            self.cli.set_timescale(self.timescale)
+            print("chopped preload: chopped ready" if done
+                  else "chopped preload: chop timed out, continuing")
+            # re-park P1 at board 1 (chop preload's spot), facing it
+            bs = self.level["board_stand"]
+            self.cli.set_player_pos(bs[0], 0, bs[1], player=1)
+            time.sleep(0.15)
+            self._face_north()
+        except Exception as e:
+            print(f"chopped preload failed ({e}); continuing without it")
+            self.cli.set_timescale(self.timescale)
 
     def _preload_plate(self):
         """P0 ends the spawn holding an empty plate: with rice already
