@@ -64,15 +64,23 @@ def board_items(items, chop_boards):
     return busy
 
 
-def nav_targets(held, cookers, plates_pos, boards_busy, ctx, plates_best=None):
+def nav_targets(held, cookers, plates_pos, boards_busy, ctx, plates_best=None,
+                chopped_pos=None):
     """Where this chef should head, given what they hold.
     ctx: {"chop_boards", "plate_station", "crates", "cooker_pos"}.
     plates_best: [pos] of the plate with most contents, if any plate is
     loaded — assembly must CONCENTRATE on one plate (nearest-plate routing
     used to scatter seaweed/rice/filling across different plates).
+    chopped_pos: positions of Chopped* items in the world — a finished
+    filling is the rarest object in the kitchen; fetching it beats starting
+    a new chop, and a partial plate should co-locate with it.
     Returns (target_list, weight) or (None, 0)."""
     if held is None:
-        # unfinished chopping beats everything: pull the chef back to
+        # a finished chopped filling beats everything: it is one pickup away
+        # from the 3rd plate layer
+        if chopped_pos:
+            return chopped_pos, 0.02
+        # unfinished chopping beats the rest: pull the chef back to
         # the occupied board so the chop can be resumed/finished
         if boards_busy:
             return boards_busy, 0.02
@@ -91,9 +99,12 @@ def nav_targets(held, cookers, plates_pos, boards_busy, ctx, plates_best=None):
             # as the delivery hatch — CanAddItem placement triggers delivery)
             return [ctx["plate_station"]], 0.02
         if n_food >= 1:
-            # partial plate: carrying it to the hatch delivers nothing.
-            # Head for the crates so the chef can put it down and fetch
-            # the missing ingredients.
+            # partial plate: co-locate with a finished filling if one exists
+            # (drop the plate next to it, then the same chef can fetch the
+            # chopped item and plate-lock it on); else head for the crates
+            # so the chef can put it down and fetch the missing ingredients.
+            if chopped_pos:
+                return chopped_pos, 0.01
             return ctx["crates"], 0.01
         cooked = [c["pos"] for c in cookers if c.get("is_cooked") and c.get("pos")]
         return (cooked, 0.02) if cooked else (None, 0.0)

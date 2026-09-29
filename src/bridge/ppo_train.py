@@ -38,9 +38,26 @@ class ActorCritic(nn.Module):
         h = self.bc.trunk(torch.cat([self.bc.conv(grid), globals_], dim=1))
         return self.bc.move_head(h), self.bc.btn_head(h), self.value_head(h).squeeze(-1)
 
+    def _load_compat(self, state_dict):
+        """load_state_dict with zero-padding for NEW input channels: encoder
+        v1->v2 added grid channels 13/14, so old checkpoints' conv1 weight
+        (32, 14, 3, 3) gets two zero channel slices -> (32, 16, 3, 3). The
+        new channels start invisible and are learned from zero — old
+        behavior fully preserved at init."""
+        conv_key = "bc.conv.0.weight"
+        own = self.state_dict()[conv_key]
+        old = state_dict[conv_key]
+        if old.shape[1] < own.shape[1]:
+            pad = torch.zeros(old.shape[0], own.shape[1] - old.shape[1],
+                              *old.shape[2:])
+            state_dict = dict(state_dict)
+            state_dict[conv_key] = torch.cat([old, pad], dim=1)
+            print(f"conv1 input channels padded {old.shape[1]} -> {own.shape[1]}")
+        self.load_state_dict(state_dict)
+
     def load_bc(self, path):
         ckpt = torch.load(path, map_location="cpu")
-        self.bc.load_state_dict(ckpt["state_dict"])
+        self._load_compat(ckpt["state_dict"])
         print(f"BC weights loaded from {path}")
 
 
@@ -231,7 +248,7 @@ def main():
     model = ActorCritic(grid_shape, g_dim).to(dev)
     if args.resume and os.path.exists(args.resume):
         ckpt = torch.load(args.resume, map_location="cpu")
-        model.load_state_dict(ckpt["state_dict"])
+        model._load_compat(ckpt["state_dict"])
         print(f"resumed PPO weights from {args.resume}")
     elif os.path.exists(args.bc):
         model.load_bc(args.bc)

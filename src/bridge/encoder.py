@@ -13,7 +13,13 @@ offset so min index = 0). Channels v1:
   3  station_crate       10  item_utensil (pots not on a burner)
   4  station_serving     11  player_0
   5  station_wash        12  player_1
-  6  station_plate_ret   13  reserved
+  6  station_plate_ret   13  plate_food_depth (recipe items on plate / 3)
+ 14  item_work_progress (chop progress of board items)  15  reserved
+
+v2 added channels 13/14: without them a rice-loaded plate and an empty
+plate were pixel-identical on the grid (assembly concentration had no
+signal), and a half-chopped cucumber looked identical to a raw one (chop
+resumption had no signal). Checkpoints resume via zero-padded conv1.
 
 Globals vector v1: [time_remaining_norm, score_norm,
                     held_p0_onehot(4), held_p1_onehot(4),
@@ -27,9 +33,9 @@ import sys
 import numpy as np
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from nav import content_names
+from nav import content_names, plate_food_count
 
-N_CHANNELS = 14
+N_CHANNELS = 16
 MAX_ORDERS = 6
 RECIPES = ["Sushi_Fish", "Sushi_Cucumber"]  # extend as needed
 
@@ -104,6 +110,14 @@ class ObsEncoder:
             r, c = lv.idx(it["grid"])
             ch = {"plate": 9, "utensil": 10}.get(it.get("kind"), 8)
             t[ch, r, c] = 1.0
+            # plate food depth: which plate actually carries the assembly
+            if it.get("kind") == "plate":
+                t[13, r, c] = max(t[13, r, c],
+                                  min(plate_food_count(it.get("contents")) / 3.0, 1.0))
+            # chop progress: a half-chopped item is worth resuming
+            wp = it.get("work_progress")
+            if wp:
+                t[14, r, c] = max(t[14, r, c], min(float(wp), 1.0))
 
         for i, p in enumerate(st.get("players", [])[:2]):
             if p.get("grid") and lv.contains(p["grid"]):

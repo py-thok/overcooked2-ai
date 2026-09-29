@@ -255,6 +255,12 @@ def compute_reward(prev, cur, ctx):
     plates_best = ([fullest["pos"]]
                    if fullest is not None and plate_food_count(fullest.get("contents")) > 0
                    else None)
+    # chopped fillings waiting in the world (exclude held ghosts — items[]
+    # includes what players carry; chasing a carried item is a dogpile)
+    held_now = _held_names(cur)
+    chopped_pos = [i["pos"] for i in cur.get("items", [])
+                   if (i.get("name") or "").startswith("Chopped")
+                   and i.get("pos") and i.get("name") not in held_now]
     # held-item transitions (symmetric so pick/drop cycling nets 0)
     pp, cp = prev.get("players", []), cur.get("players", [])
     for i in range(min(len(pp), len(cp))):
@@ -289,7 +295,8 @@ def compute_reward(prev, cur, ctx):
             parts["plated"] += W["plated"]
         # navigation shaping: delta distance to the recipe-relevant target
         targets, w = nav_targets(ch, cur.get("cookers", []), plates_pos,
-                                 cur_boards, ctx, plates_best=plates_best)
+                                 cur_boards, ctx, plates_best=plates_best,
+                                 chopped_pos=chopped_pos)
         if targets:
             d_prev = nearest_dist(pp[i].get("pos"), targets)
             d_cur = nearest_dist(cp[i].get("pos"), targets)

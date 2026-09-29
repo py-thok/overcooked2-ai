@@ -10,8 +10,12 @@ SUSHI_1_4 = {
     "scene": "s_sushi_1_4",
     # chopping boards ("countertop_01_chopping_board_wood_no_edge")
     "chop_boards": [(15.6, 0.0, -2.4), (20.4, 0.0, -2.4)],
-    # serve hatch: ClientPlateStation doubles as delivery point
+    # serve hatch: ClientPlateStation doubles as delivery point; stand dead
+    # north of it or the scan prefers the plate_return at (13.2,-12)
+    # (probe: from 1.9m off-axis the serve hit plate_return 4x, from
+    # (15.0,-10.9) it delivered first try, score 0 -> 63)
     "plate_station": (15.0, 0.0, -12.0),
+    "hatch_stand": (15.0, 0.0, -10.9),
     # curriculum spawn (x, z) per chef: P0 before the rice crate (8.4,-2.4),
     # P1 before the first chopping board
     "spawn_spots": [(8.4, -3.6), (15.6, -3.7)],
@@ -21,6 +25,11 @@ SUSHI_1_4 = {
     # steps, too long to discover by chance)
     "cucumber_crate": (13.2, 0.0, -2.4),
     "cucumber_stand": (13.2, -3.6),   # probes used crate_z - 1.2 successfully
+    # FISH crate (fetch-verified: dispenses SushiFish) — long mislabeled as
+    # the fire extinguisher (the extinguisher is a LOOSE item at ~(14.4,-2.4)).
+    # Fish orders make up ~60% of the queue; without this crate located,
+    # those orders were silently undeliverable.
+    "fish_crate": (13.2, 0.0, -1.2),
     "board_stand": (15.6, -3.6),      # south of board 1, facing north
     # rice curriculum: start rice cooking at spawn (fetch verified:
     # (8.4,-2.4) dispenses SushiRice; plated stayed ~2/50 because the

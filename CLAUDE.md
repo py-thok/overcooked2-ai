@@ -29,10 +29,15 @@ RL 在 Overcooked! 2 寿司关(s_sushi_1_4,campaign 1-4)拿极高分(世界纪�
 
 ## 探针/调试教训(血泪)
 - 探针第一步必须 `send_action(player=p, move=(0,0))` 零化**两个**玩家的移动输入——注入的移动输入会永久残留。
+- **探针必须 `set_mode("drive")`**——没有 drive 模式,move/use 注入被完全忽略(传送和语义事件照常,极具迷惑性:切菜静默无进度、fwd 永远不变)。
+- 拾取动画 ~1s:INTERACT 后**至少等 1.3s 再传送**,否则动画被取消、物品被弹飞(切好的黄瓜飞了 7m)。
 - 3x timescale 下一回合 ~70 wall 秒;探针跨回合边界会拿到 no-player/WorldMap。
-- 灭火器在 (14.4,-2.4),会在黄瓜箱附近的邻近扫描中胜出(loose items 优先于 crate 引用)。
+- 箱子身份(fetch 实测):(8.4,-2.4)=米饭、(8.4,-1.2)=海带、(13.2,-2.4)=黄瓜、**(13.2,-1.2)=鱼**(长期误标为灭火器——灭火器是 (14.4,-2.4) 的散件)。
+- 上菜口 (15,-12) 正对北站位 (15.0,-10.9) INTERACT 即交付(实测 +63 分);站偏会被 plate_return (13.2,-12) 抢先。
 - 盘子站 (15,-12) 就是上菜口;切菜板在 (15.6,-2.4)/(20.4,-2.4)。
 - 订单只有 Sushi_Cucumber 和 Sushi_Fish——都需要米饭+海带+切好的料,**不切菜永远 0 分**。
+- items[] 的 PhysicalAttachment 扫描**包含手持物**(手持=挂点在玩家身上)——奖励核算必须按名去重,否则拿起/放下产生幻影增减。
+- 盘子 contents 是嵌套复合节点(真名在 children);锅里熟米饭仍是 ingredient 节点(Cooked* 只在盘子上)。
 
 ## 监控
 - `python work\tb_trend.py` — 最近 50 个 rollout 的 reward parts 正率 + episode 分数。
