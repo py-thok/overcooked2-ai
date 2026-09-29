@@ -104,6 +104,7 @@ class OC2Env:
             "plate_station": self.level["plate_station"],
             "crates": [s["pos"] for s in slist if "DispenserCrate" in s.get("name", "")],
             "cooker_pos": [s["pos"] for s in slist if "workstation_cooker" in s.get("name", "")],
+            "chopped_paid": set(),  # chopped pickups already paid this episode
         }
         self._release_all()
         self._interact_ready = [0.0, 0.0]

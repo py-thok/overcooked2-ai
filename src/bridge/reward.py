@@ -284,7 +284,13 @@ def compute_reward(prev, cur, ctx):
             if chn is not None and is_ingredient(chn):
                 parts["held_ing"] += W["held_ing"]               # picked up an ingredient
                 parts["metric_pickup_ing"] += 1.0                # count (not a reward)
-                if chn.startswith("Chopped") and not (phn or "").startswith("Chopped"):
+                # pay each distinct chopped item ONCE per episode — the
+                # chopped-preload cucumber was being yo-yo'd (pick up +1.0,
+                # put down, repeat: +6/rollout with zero plates assembled)
+                if (chn.startswith("Chopped")
+                        and not (phn or "").startswith("Chopped")
+                        and chn not in ctx.setdefault("chopped_paid", set())):
+                    ctx["chopped_paid"].add(chn)
                     parts["chopped"] += W["chopped"]             # chopping paid off
             if phn is not None and is_ingredient(phn) and chn is None:
                 parts["held_ing"] -= W["held_ing"]               # put it down

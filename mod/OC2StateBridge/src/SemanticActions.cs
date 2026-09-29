@@ -109,19 +109,22 @@ namespace OC2StateBridge
                     return "place-into:" + pot.name;
                 }
             }
-            // PLATE scoop-lock: pour the pot's COOKED contents into the held
-            // plate. Gate on a cooking handler near the pot reporting
-            // IsCooked() — contents alone are wrong twice over: an EMPTY pot
-            // let INTERACT pour the plate's freshly scooped rice back into
-            // loose pots being carried around (rice vanished into an
-            // unobservable sink), and a COOKING pot would pour RAW rice onto
-            // the plate (undeliverable). Note cooked pot rice stays an
-            // IngredientAssembledNode (the Cooked* composite only appears on
-            // plates), so node-type sniffing cannot detect doneness.
+            // PLATE scoop-lock: pour the pot's COOKED contents into a held
+            // EMPTY plate. Three gates, all learned from observation:
+            // 1. pot must HOLD cooked food — empty/loose pots used to
+            //    swallow freshly scooped rice (unobservable sink);
+            // 2. node types can't detect doneness (pot rice stays an
+            //    ingredient node) — a co-located cooking handler's
+            //    IsCooked() can;
+            // 3. the plate must be EMPTY — scooping a loaded plate merged
+            //    its rice back INTO the ever-full janitor pot, which fired
+            //    no waste penalty (rice "still existed") and reset the
+            //    plate's first-content flag: plated yo-yo'd to 4.2/rollout
+            //    while plates never grew a second layer.
             if (isPlate)
             {
                 ClientPlacementContainer pot = FindNearestPotContainer(pc.transform.position, 3.0f);
-                if (pot != null && PotIsScoopable(pot))
+                if (pot != null && PotIsScoopable(pot) && PlateIsEmpty(held))
                 {
                     Send("Place", pc.gameObject, pot);
                     return "place-into:" + pot.name;
@@ -197,6 +200,20 @@ namespace OC2StateBridge
                 if (d < bestD) { bestD = d; best = c; }
             }
             return best;
+        }
+
+        /// <summary>True if the held plate carries nothing (scooping is
+        /// filling an empty plate; a loaded plate at a pot must NOT pour
+        /// back).</summary>
+        private static bool PlateIsEmpty(GameObject plate)
+        {
+            try
+            {
+                IIngredientContents ic = plate.RequestInterface<IIngredientContents>();
+                AssembledDefinitionNode[] contents = ic != null ? ic.GetContents() : null;
+                return contents == null || contents.Length == 0;
+            }
+            catch { return false; }
         }
 
         /// <summary>True if a cooking handler co-located with this pot
