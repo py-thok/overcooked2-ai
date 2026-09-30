@@ -54,6 +54,7 @@ class OC2Env:
         self.max_steps = max_steps
         self.cli = StateBridgeClient(port=port).connect()
         self._rng = np.random.default_rng(port)  # per-instance deterministic
+        self._waste_carry = 0.0
         self._enc = None
         self._prev = None
         self._steps = 0
@@ -110,6 +111,7 @@ class OC2Env:
         }
         self._release_all()
         self._interact_ready = [0.0, 0.0]
+        self._waste_carry = 0.0
         self._steps = 0
         self._curriculum_spawn()
         self._prev = self.cli.get_state()
@@ -552,6 +554,24 @@ class OC2Env:
             # ping-pong removals (symmetric board_add is the anti-farm)
             reward -= parts["board_add"]
             parts["board_add"] = 0.0
+        # serve lag compensation: the hatch consumes the plate on the
+        # delivery frame but round.score can increment a frame LATER — the
+        # exemption check (score==0) then misfires and real serves eat
+        # plate_waste (observed run64: -4.4/rollout ≈ -3 per scored serve,
+        # exempt on paper). Charge waste one step late; a score rise in
+        # between cancels it.
+        carry = self._waste_carry
+        self._waste_carry = 0.0
+        if parts.get("plate_waste", 0.0) < 0.0:
+            self._waste_carry = -parts["plate_waste"]   # charge next step
+            reward -= parts["plate_waste"]               # uncharge now
+            parts["plate_waste"] = 0.0
+        if carry > 0.0:
+            if parts.get("score", 0.0) > 0.0:
+                pass  # a serve explains last step's food loss
+            else:
+                reward -= carry
+                parts["plate_waste"] = -carry
         if not done:
             # Last ~20 game-seconds no pipeline link can complete (cooking
             # alone takes that long), so under the shaping any action only
