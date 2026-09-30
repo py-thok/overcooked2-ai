@@ -236,8 +236,12 @@ class OC2Env:
             time.sleep(0.15)
             self._face_north()
             if at_hatch:
-                hs = self.level["hatch_stand"]
-                self.cli.set_player_pos(hs[0], 0, hs[1], player=0)
+                hs = self.level["hatch_stand"]  # (x, y, z) tuple
+                # hs[1] is Y, not Z — passing it as z teleported P0 to
+                # z=0 (inside the north counters), collision-ejecting the
+                # chef and knocking the sushi loose (run61: parked trials
+                # had P0 empty-handed at a scrambled position)
+                self.cli.set_player_pos(hs[0], hs[1], hs[2], player=0)
                 time.sleep(0.15)
             else:
                 self.cli.set_player_pos(spawn0[0], 0, spawn0[1], player=0)
