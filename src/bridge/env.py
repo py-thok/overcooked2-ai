@@ -226,8 +226,16 @@ class OC2Env:
             # my hand" (drop); nav alone (-0.45/rollout — chefs DRIFT AWAY
             # from the hatch) wasn't overcoming it. The other half park at
             # spawn so carrying-the-distance is still trained.
-            at_hatch = self._rng.random() < 0.5
-            if at_hatch and n >= 3:
+            at_hatch = self._rng.random() < 0.5 and n >= 3
+            # re-park P1 at board 1 and face chefs north FIRST: _face_north
+            # walks BOTH chefs ~3-4m — called after parking, it shoved a
+            # hatch-parked P0 out of hatch-lock range in run60 (33 parked
+            # episodes, 0 serves; both 63s came from spawn episodes).
+            bs = self.level["board_stand"]
+            self.cli.set_player_pos(bs[0], 0, bs[1], player=1)
+            time.sleep(0.15)
+            self._face_north()
+            if at_hatch:
                 hs = self.level["hatch_stand"]
                 self.cli.set_player_pos(hs[0], 0, hs[1], player=0)
                 time.sleep(0.15)
@@ -236,12 +244,7 @@ class OC2Env:
                 time.sleep(0.15)
             print(f"sushi preload: scoop=True seaweed={seaweed_ok} "
                   f"chopped={chopped_ok} -> {n} contents"
-                  + (" (parked at hatch)" if at_hatch and n >= 3 else ""))
-            # re-park P1 at board 1 (its chop-practice spot)
-            bs = self.level["board_stand"]
-            self.cli.set_player_pos(bs[0], 0, bs[1], player=1)
-            time.sleep(0.15)
-            self._face_north()
+                  + (" (parked at hatch)" if at_hatch else ""))
         except Exception as e:
             print(f"sushi preload failed ({e}); continuing without it")
 
