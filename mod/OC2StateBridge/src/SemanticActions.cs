@@ -164,7 +164,7 @@ namespace OC2StateBridge
                     // (observed: -7.3/rollout of plate_waste from rejected
                     // partial serves).
                     ClientPlateStation hatch = FindNearestHatch(pc.transform.position, 3.0f);
-                    if (hatch != null && PlateNodeCount(held) >= 3)
+                    if (hatch != null && PlateNodeCount(held) >= 3 && PlateMatchesOpenOrder(held))
                     {
                         Send("Place", pc.gameObject, hatch);
                         return "serve:" + hatch.name;
@@ -261,6 +261,89 @@ namespace OC2StateBridge
                 if (d < bestD) { bestD = d; best = c; }
             }
             return best;
+        }
+
+        // ---------- order-aware serve gate ----------
+        // A delivered plate that matches NO open order is consumed for 0
+        // points (run62: ~10 rejected serves, -3 plate_waste each — the
+        // hatch was burning one of every three plates). Only serve when the
+        // plate's filling matches an open order's recipe. Fail-OPEN when
+        // orders are unreadable (preserves pre-gate behavior).
+
+        private static readonly string[] FILLINGS = { "Cucumber", "SushiFish" };
+
+        private static object GetFieldR(object obj, string name)
+        {
+            if (obj == null) return null;
+            Type t = obj.GetType();
+            while (t != null)
+            {
+                FieldInfo f = t.GetField(name,
+                    BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+                if (f != null) return f.GetValue(obj);
+                t = t.BaseType;
+            }
+            return null;
+        }
+
+        private static void CollectNames(AssembledDefinitionNode node, System.Collections.Generic.List<string> acc)
+        {
+            if (node == null || node is NullAssembledNode) return;
+            IngredientAssembledNode ing = node as IngredientAssembledNode;
+            if (ing != null)
+            {
+                UnityEngine.Object uo = GetFieldR(ing, "m_ingriedientOrderNode") as UnityEngine.Object; // [sic] game's typo
+                if (uo != null) acc.Add(uo.name);
+                return;
+            }
+            ItemAssembledNode item = node as ItemAssembledNode;
+            if (item != null)
+            {
+                if (item.m_itemOrderNode != null) acc.Add(item.m_itemOrderNode.name);
+                return;
+            }
+            foreach (AssembledDefinitionNode child in node) CollectNames(child, acc);
+        }
+
+        /// <summary>True if the plate's filling matches some OPEN order's
+        /// recipe (Sushi_Cucumber wants "Cucumber", Sushi_Fish "SushiFish").
+        /// Fail-open when the orders list can't be read.</summary>
+        private static bool PlateMatchesOpenOrder(GameObject plate)
+        {
+            try
+            {
+                IIngredientContents ic = plate.RequestInterface<IIngredientContents>();
+                AssembledDefinitionNode[] contents = ic != null ? ic.GetContents() : null;
+                System.Collections.Generic.List<string> names = new System.Collections.Generic.List<string>();
+                if (contents != null)
+                    foreach (AssembledDefinitionNode n in contents) CollectNames(n, names);
+                string plateFilling = null;
+                foreach (string f in FILLINGS)
+                    if (names.Contains(f)) plateFilling = f;
+                if (plateFilling == null) return false;  // no filling = matches nothing
+
+                ServerKitchenFlowControllerBase flow = GameUtils.GetFlowController() as ServerKitchenFlowControllerBase;
+                if (flow == null) return true;   // fail-open
+                ServerTeamMonitor mon = flow.GetMonitorForTeam(TeamID.One);
+                object ordersObj = mon != null && mon.OrdersController != null
+                    ? GetFieldR(mon.OrdersController, "m_activeOrders") : null;
+                System.Collections.IEnumerable orders = ordersObj as System.Collections.IEnumerable;
+                if (orders == null) return true; // fail-open
+                bool sawOrder = false;
+                foreach (object o in orders)
+                {
+                    sawOrder = true;
+                    object entry = GetFieldR(o, "RecipeListEntry");
+                    UnityEngine.Object uo = GetFieldR(entry, "m_order") as UnityEngine.Object;
+                    string recipe = uo != null ? uo.name : null;
+                    if (recipe == null) continue;
+                    // recipe name -> required filling name
+                    if (recipe.Contains("Cucumber") && plateFilling == "Cucumber") return true;
+                    if (recipe.Contains("Fish") && plateFilling == "SushiFish") return true;
+                }
+                return sawOrder ? false : true;   // empty list = fail-open
+            }
+            catch { return true; }
         }
 
         /// <summary>Top-level content nodes on the plate (a complete sushi
