@@ -252,6 +252,21 @@ class OC2Env:
         except Exception as e:
             print(f"sushi preload failed ({e}); continuing without it")
 
+    def _demanded_filling_crate(self):
+        """Crate for the filling the OPEN orders actually want. Serving a
+        cucumber sushi into a fish-only order window scores 0 and wastes
+        the whole plate (observed: 3-food plates consumed at the hatch with
+        score_delta=0). Falls back to cucumber when orders aren't up yet."""
+        try:
+            orders = self.cli.get_state().get("orders", [])
+        except Exception:
+            orders = []
+        if orders:
+            urgent = min(orders, key=lambda o: o.get("remaining", 1e9))
+            if "Fish" in (urgent.get("recipe") or ""):
+                return self.level.get("fish_crate", self.level["cucumber_crate"])
+        return self.level["cucumber_crate"]
+
     def _preload_chopped(self):
         """Scripted-chop a cucumber on board 2 at spawn, so every episode
         opens with a READY chopped filling. The 3rd plate layer has been
@@ -263,7 +278,7 @@ class OC2Env:
         reward can pull the whole chop chain back up from the top.
         Board 1 still gets the raw cucumber (chop practice stays available).
         Speed-chops at 8x like the rice speed-cook; failure just skips."""
-        crate = self.level.get("cucumber_crate")
+        crate = self._demanded_filling_crate()
         if not crate or len(self.level.get("chop_boards", [])) < 2:
             return
         board = self.level["chop_boards"][1]

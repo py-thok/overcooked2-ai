@@ -157,11 +157,14 @@ namespace OC2StateBridge
                     // loaded plate is placed on it (observed: every emptying
                     // event happened exactly there, and plated yo-yo'd on the
                     // refires). Scan placement is where that happens, so a
-                    // loaded plate bypasses the scan: direct serve when the
-                    // hatch is in reach (also fixes plate_return whiffs),
-                    // otherwise a safe floor drop (plates read fine there).
+                    // loaded plate bypasses the scan entirely.
+                    // The hatch serve is gated on >=3 content nodes: every
+                    // order needs rice+nori+filling, so a 1-2 node plate
+                    // can NEVER score — serving it just burns the food
+                    // (observed: -7.3/rollout of plate_waste from rejected
+                    // partial serves).
                     ClientPlateStation hatch = FindNearestHatch(pc.transform.position, 3.0f);
-                    if (hatch != null)
+                    if (hatch != null && PlateNodeCount(held) >= 3)
                     {
                         Send("Place", pc.gameObject, hatch);
                         return "serve:" + hatch.name;
@@ -258,6 +261,19 @@ namespace OC2StateBridge
                 if (d < bestD) { bestD = d; best = c; }
             }
             return best;
+        }
+
+        /// <summary>Top-level content nodes on the plate (a complete sushi
+        /// is rice-composite + nori + filling = 3).</summary>
+        private static int PlateNodeCount(GameObject plate)
+        {
+            try
+            {
+                IIngredientContents ic = plate.RequestInterface<IIngredientContents>();
+                AssembledDefinitionNode[] contents = ic != null ? ic.GetContents() : null;
+                return contents != null ? contents.Length : 0;
+            }
+            catch { return 0; }
         }
 
         /// <summary>True if the held plate carries nothing (scooping is
