@@ -630,6 +630,17 @@ class OC2Env:
         restarted = st.get("in_round") and tr_cur > 0
         return st, restarted
 
+    def reconnect(self):
+        """Drop the dead bridge client and reconnect (watchdog relaunches
+        the game first; see watchdog.ensure_game)."""
+        port = self.cli.port
+        try:
+            self.cli.close()
+        except Exception:
+            pass
+        self.cli = StateBridgeClient(port=port).connect()
+        self._prev = None   # state lineage broken — next collect() needs a reset
+
     def close(self):
         self._release_all()
         self.cli.set_timescale(1.0)

@@ -23,6 +23,7 @@ from torch.utils.tensorboard import SummaryWriter
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from env import OC2Env, N_ACTIONS
 from bc_train import BCPolicy
+from watchdog import ensure_game
 
 
 class ActorCritic(nn.Module):
@@ -261,8 +262,19 @@ def main():
     t_start = time.time()
     try:
         while gs < args.total_steps:
-            batch, obs, parts_sum, gs = collect_rollout(
-                model, envs, args, dev, writer, gs, ep_scores)
+            try:
+                batch, obs, parts_sum, gs = collect_rollout(
+                    model, envs, args, dev, writer, gs, ep_scores)
+            except (ConnectionError, OSError) as e:
+                # a game instance died (run69/70 crashed this way — hours of
+                # downtime each). Relaunch the dead instance(s), reconnect,
+                # discard the partial rollout, keep training.
+                print(f"connection lost ({e}); watchdog recovering...")
+                for env in envs:
+                    ensure_game(env.cli.port)
+                for env in envs:
+                    env.reconnect()
+                continue
             adv_f, ret_f, _ = compute_gae(model, batch, obs, args, dev)
             metrics = ppo_update(model, opt, batch, adv_f, ret_f, args, dev)
 
