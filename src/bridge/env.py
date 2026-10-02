@@ -55,6 +55,7 @@ class OC2Env:
         self.cli = StateBridgeClient(port=port).connect()
         self._rng = np.random.default_rng(port)  # per-instance deterministic
         self._waste_recent = []   # (step, amount) charged waste refundable by a near-future serve
+        self._last_score_step = -9999  # last step a score rise landed (serve)
         self._enc = None
         self._prev = None
         self._steps = 0
@@ -112,6 +113,7 @@ class OC2Env:
         self._release_all()
         self._interact_ready = [0.0, 0.0]
         self._waste_recent = []
+        self._last_score_step = -9999
         self._steps = 0
         self._curriculum_spawn()
         self._prev = self.cli.get_state()
@@ -561,22 +563,29 @@ class OC2Env:
                   f"round_score={st.get('round', {}).get('score', 0)} "
                   f"prev_score={self._prev.get('round', {}).get('score', 0)}")
 
-        # serve refund window: the hatch empties the plate on the delivery
-        # frame but round.score lands with the order-CARD animation —
-        # several env steps later, not one (one-step carry in run65/66
-        # demonstrably failed: TB showed exactly -3 per serve). Charge
-        # plate_waste immediately, but remember it for ~10 steps and refund
-        # when a score rise arrives.
-        if parts.get("score", 0.0) > 0.0 and self._waste_recent:
-            refund = sum(a for _, a in self._waste_recent)
-            reward += refund
-            parts["plate_waste"] += refund   # net the metric back toward 0
-            print(f"[waste-dbg] REFUND +{refund:.1f} on port {self.cli.port}")
-            self._waste_recent = []
+        # serve/waste window, BOTH directions: run68's trace showed the plate
+        # empties a step AFTER the score lands (score +3.25 at t with the
+        # plate intact, waste -3 at t+1) — a forward-only refund can never
+        # catch that. Suppress waste within ~10 steps AFTER a score rise,
+        # and refund earlier waste when a score rise arrives.
+        if parts.get("score", 0.0) > 0.0:
+            self._last_score_step = self._steps
+            if self._waste_recent:
+                refund = sum(a for _, a in self._waste_recent)
+                reward += refund
+                parts["plate_waste"] += refund
+                print(f"[waste-dbg] REFUND +{refund:.1f} on port {self.cli.port}")
+                self._waste_recent = []
         if parts.get("plate_waste", 0.0) < 0.0:
-            self._waste_recent.append((self._steps, -parts["plate_waste"]))
-            self._waste_recent = [(s, a) for s, a in self._waste_recent
-                                  if self._steps - s <= 10]
+            if self._steps - self._last_score_step <= 10:
+                # the emptied plate was just served (its score already landed)
+                print(f"[waste-dbg] SUPPRESS {parts['plate_waste']:+.1f} after serve on port {self.cli.port}")
+                reward -= parts["plate_waste"]
+                parts["plate_waste"] = 0.0
+            else:
+                self._waste_recent.append((self._steps, -parts["plate_waste"]))
+                self._waste_recent = [(s, a) for s, a in self._waste_recent
+                                      if self._steps - s <= 10]
         if not done:
             # Last ~20 game-seconds no pipeline link can complete (cooking
             # alone takes that long), so under the shaping any action only
