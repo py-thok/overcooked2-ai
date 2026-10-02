@@ -54,7 +54,7 @@ class OC2Env:
         self.max_steps = max_steps
         self.cli = StateBridgeClient(port=port).connect()
         self._rng = np.random.default_rng(port)  # per-instance deterministic
-        self._waste_carry = 0.0
+        self._waste_recent = []   # (step, amount) charged waste refundable by a near-future serve
         self._enc = None
         self._prev = None
         self._steps = 0
@@ -111,7 +111,7 @@ class OC2Env:
         }
         self._release_all()
         self._interact_ready = [0.0, 0.0]
-        self._waste_carry = 0.0
+        self._waste_recent = []
         self._steps = 0
         self._curriculum_spawn()
         self._prev = self.cli.get_state()
@@ -554,24 +554,29 @@ class OC2Env:
             # ping-pong removals (symmetric board_add is the anti-farm)
             reward -= parts["board_add"]
             parts["board_add"] = 0.0
-        # serve lag compensation: the hatch consumes the plate on the
-        # delivery frame but round.score can increment a frame LATER — the
-        # exemption check (score==0) then misfires and real serves eat
-        # plate_waste (observed run64: -4.4/rollout ≈ -3 per scored serve,
-        # exempt on paper). Charge waste one step late; a score rise in
-        # between cancels it.
-        carry = self._waste_carry
-        self._waste_carry = 0.0
+        # TEMP debug (run67): trace every serve/waste with the score timeline
+        if parts.get("plate_waste", 0.0) != 0.0 or parts.get("score", 0.0) != 0.0:
+            print(f"[waste-dbg] port={self.cli.port} waste={parts.get('plate_waste', 0.0):+.1f} "
+                  f"score_part={parts.get('score', 0.0):+.2f} "
+                  f"round_score={st.get('round', {}).get('score', 0)} "
+                  f"prev_score={self._prev.get('round', {}).get('score', 0)}")
+
+        # serve refund window: the hatch empties the plate on the delivery
+        # frame but round.score lands with the order-CARD animation —
+        # several env steps later, not one (one-step carry in run65/66
+        # demonstrably failed: TB showed exactly -3 per serve). Charge
+        # plate_waste immediately, but remember it for ~10 steps and refund
+        # when a score rise arrives.
+        if parts.get("score", 0.0) > 0.0 and self._waste_recent:
+            refund = sum(a for _, a in self._waste_recent)
+            reward += refund
+            parts["plate_waste"] += refund   # net the metric back toward 0
+            print(f"[waste-dbg] REFUND +{refund:.1f} on port {self.cli.port}")
+            self._waste_recent = []
         if parts.get("plate_waste", 0.0) < 0.0:
-            self._waste_carry = -parts["plate_waste"]   # charge next step
-            reward -= parts["plate_waste"]               # uncharge now
-            parts["plate_waste"] = 0.0
-        if carry > 0.0:
-            if parts.get("score", 0.0) > 0.0:
-                pass  # a serve explains last step's food loss
-            else:
-                reward -= carry
-                parts["plate_waste"] = -carry
+            self._waste_recent.append((self._steps, -parts["plate_waste"]))
+            self._waste_recent = [(s, a) for s, a in self._waste_recent
+                                  if self._steps - s <= 10]
         if not done:
             # Last ~20 game-seconds no pipeline link can complete (cooking
             # alone takes that long), so under the shaping any action only

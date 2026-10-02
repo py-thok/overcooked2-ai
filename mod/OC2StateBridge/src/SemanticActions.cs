@@ -164,20 +164,20 @@ namespace OC2StateBridge
                     // (observed: -7.3/rollout of plate_waste from rejected
                     // partial serves).
                     ClientPlateStation hatch = FindNearestHatch(pc.transform.position, 3.0f);
-                    if (hatch != null && PlateNodeCount(held) >= 3)
+                    if (hatch != null)
                     {
-                        if (PlateMatchesOpenOrder(held))
+                        if (PlateNodeCount(held) >= 3 && PlateMatchesOpenOrder(held))
                         {
                             Send("Place", pc.gameObject, hatch);
                             return "serve:" + hatch.name;
                         }
-                        // HOLD, don't drop: plates dropped in the hatch zone
-                        // are auto-collected even without our Place event —
-                        // a mismatched plate dropped there is consumed for 0
-                        // points (observed: 3-food plate vanishing at
-                        // (15,-12) with score_delta=0). Waiting is also the
-                        // optimal play: a matching order may open shortly.
-                        return "hold-order-mismatch";
+                        // HOLD any loaded plate at the hatch, complete or
+                        // not: the hatch zone AUTO-COLLECTS dropped plates
+                        // (no Place event needed — a 2-food plate dropped
+                        // here vanished in 0.16s for 0 points). Walking
+                        // away is always available; dropping here never
+                        // helps.
+                        return "hold-at-hatch";
                     }
                     Send("Take", pc.gameObject, (GameObject)null);
                     return "drop-loaded-plate";
