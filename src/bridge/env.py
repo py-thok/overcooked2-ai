@@ -556,13 +556,6 @@ class OC2Env:
             # ping-pong removals (symmetric board_add is the anti-farm)
             reward -= parts["board_add"]
             parts["board_add"] = 0.0
-        # TEMP debug (run67): trace every serve/waste with the score timeline
-        if parts.get("plate_waste", 0.0) != 0.0 or parts.get("score", 0.0) != 0.0:
-            print(f"[waste-dbg] port={self.cli.port} waste={parts.get('plate_waste', 0.0):+.1f} "
-                  f"score_part={parts.get('score', 0.0):+.2f} "
-                  f"round_score={st.get('round', {}).get('score', 0)} "
-                  f"prev_score={self._prev.get('round', {}).get('score', 0)}")
-
         # serve/waste window, BOTH directions: run68's trace showed the plate
         # empties a step AFTER the score lands (score +3.25 at t with the
         # plate intact, waste -3 at t+1) — a forward-only refund can never
@@ -574,12 +567,10 @@ class OC2Env:
                 refund = sum(a for _, a in self._waste_recent)
                 reward += refund
                 parts["plate_waste"] += refund
-                print(f"[waste-dbg] REFUND +{refund:.1f} on port {self.cli.port}")
                 self._waste_recent = []
         if parts.get("plate_waste", 0.0) < 0.0:
             if self._steps - self._last_score_step <= 10:
                 # the emptied plate was just served (its score already landed)
-                print(f"[waste-dbg] SUPPRESS {parts['plate_waste']:+.1f} after serve on port {self.cli.port}")
                 reward -= parts["plate_waste"]
                 parts["plate_waste"] = 0.0
             else:
