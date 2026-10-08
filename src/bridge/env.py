@@ -23,7 +23,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from state_client import StateBridgeClient
 from encoder import ObsEncoder
 from level_config import get_level
-from nav import content_names
+from nav import content_names, plate_food_count
 from reward import compute_reward
 
 # world (dx, dz) for the 9 moves
@@ -41,6 +41,14 @@ BTN_NAMES = {0: None, 1: "pickup", 2: "use", 3: "dash"}
 # rounds are cut this many game-seconds early (nothing can finish cooking
 # in the tail, so the shaped reward there just teaches freezing)
 EARLY_DONE_SECONDS = 20.0
+
+# Phase B' (docs/SCAFFOLD_REMOVAL_ROADMAP.md §3): the sushi preload fires
+# in a Bernoulli(PRELOAD_P) fraction of episodes, so serves keep the score
+# gradient warm while non-preloaded episodes force IN-ROUND assembly
+# (plated/plate_add/plate_complete only fire from policy actions there).
+# Decay 0.5 -> 0.25 -> 0 gated on the assembly event rate of non-preloaded
+# episodes; roll back a notch if serves/episode drop >50%.
+PRELOAD_P = 0.5
 
 
 class OC2Env:
@@ -131,7 +139,15 @@ class OC2Env:
         self._preload_chopped()
         self._preload_rice()
         self._preload_plate()
-        self._preload_sushi()
+        if self._rng.random() < PRELOAD_P:
+            self._preload_sushi()
+        else:
+            # B': staged preconditions stay (chopped filling on board 2,
+            # cooked rice in the pot, plate in P0's hand) — assembly is the
+            # policy's job now, so its rewards fire in-episode for the
+            # first time. P0 stays at spawn; P1 ends parked at board 1.
+            print("sushi preload: SKIPPED (p=%.2f) — assembly is on the policy"
+                  % PRELOAD_P)
 
     def _preload_sushi(self):
         """Assemble a COMPLETE sushi into P0's hand at spawn: scoop the
@@ -582,14 +598,27 @@ class OC2Env:
             # alone takes that long), so under the shaping any action only
             # risks floor_drop/held_utensil penalties — the policy correctly
             # learns to freeze. Cut the idle tail; keep playing only while a
-            # loaded plate is being carried (last-second serves are real).
+            # loaded plate is being carried (last-second serves are real)
+            # OR assembly is in progress (Phase B': a chopped filling exists,
+            # a pot is mid-cook, or any plate carries food — the tail is
+            # exactly when a late assembly finishes; cutting it starved the
+            # assembly window the moment the sushi preload stopped
+            # guaranteeing a loaded plate).
             tr_now = st.get("round", {}).get("time_remaining", -1)
             if 0 <= tr_now < EARLY_DONE_SECONDS:
                 loaded_plate = any(
                     (p.get("held") or {}).get("is_plate")
                     and (p.get("held") or {}).get("contents")
                     for p in st.get("players", []))
-                if not loaded_plate:
+                assembly_live = (
+                    any((it.get("name") or "").startswith("Chopped")
+                        for it in st.get("items", []))
+                    or any(c.get("progress", 0) > 0 and not c.get("is_cooked")
+                           for c in st.get("cookers", []))
+                    or any(it.get("kind") == "plate"
+                           and plate_food_count(it.get("contents")) >= 1
+                           for it in st.get("items", [])))
+                if not (loaded_plate or assembly_live):
                     done = True
         # score resets to 0 with the new round; the episode's final score was
         # visible in the previous state

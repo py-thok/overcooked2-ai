@@ -29,9 +29,13 @@ REWARD_WEIGHTS = {
                           # plates churn scoop->dump->rescope because emptying
                           # resets "first contents". The churn cycle must not
                           # out-earn a real serve)
-    "plate_add": 0.3,     # any plate (held or on a surface) gained a content —
+    "plate_add": 0.5,     # any plate (held or on a surface) gained a content —
                           # assembly needs rice+nori+filling; plating only the
-                          # first content left additions 2/3 unrewarded
+                          # first content left additions 2/3 unrewarded.
+                          # 0.3->0.5 (Phase B'): assembly is in-episode now
+                          # (preload decayed), the gradient must out-compete
+                          # scoop-churn. Roll back if plate_add stays 0 after
+                          # ~300k steps.
     "plate_waste": -1.0,  # per plate-food item LOST without a score increase.
                           # -0.2->-1.0: churn economics. A scoop->dump cycle
                           # earned plated+plate_add-waste = +1.1 at -0.2, so
@@ -39,13 +43,13 @@ REWARD_WEIGHTS = {
                           # -0.56 -> -0.79). At -1.0 a churn cycle nets
                           # 0.6+0.3-1.0 < 0 while a real 3-layer serve keeps
                           # ~+3.5 (adds+complete+score).
-    "plate_complete": 1.0, # a plate reaching 3 recipe items (rice+nori+
-                          # chopped filling = a servable sushi). 2-layer
-                          # plates (rice+nori) appeared in run42 but the 3rd
-                          # layer starves: scooping pays ~1.3 per INTERACT
-                          # while a full chop pays ~1.5 over ~20 use-hold
-                          # steps, so the policy rationally skips chopping —
-                          # yet orders are undeliverable without it.
+    "plate_complete": 2.0, # a plate reaching 3 recipe items (rice+nori+
+                          # chopped filling = a servable sushi). 1.0->2.0
+                          # (Phase B'): NEVER fired in-rollout before (0/50
+                          # every run) — until the first policy-made complete
+                          # plate, assembly and churn are indistinguishable in
+                          # advantage. A completed-but-unserved plate must pay
+                          # more than its ingredients' churn value (~+1.9).
     "board_add": 0.3,     # raw filling placed on a chopping board
     "chop_prog": 0.5,     # per unit of chop progress on a board (dense;
                           # "chopped" only fires when the item is picked up,
