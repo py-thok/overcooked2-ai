@@ -39,26 +39,72 @@ class ActorCritic(nn.Module):
         h = self.bc.trunk(torch.cat([self.bc.conv(grid), globals_], dim=1))
         return self.bc.move_head(h), self.bc.btn_head(h), self.value_head(h).squeeze(-1)
 
-    def _load_compat(self, state_dict):
-        """load_state_dict with zero-padding for NEW input channels: encoder
-        v1->v2 added grid channels 13/14, so old checkpoints' conv1 weight
-        (32, 14, 3, 3) gets two zero channel slices -> (32, 16, 3, 3). The
-        new channels start invisible and are learned from zero — old
-        behavior fully preserved at init."""
-        conv_key = "bc.conv.0.weight"
-        own = self.state_dict()[conv_key]
-        old = state_dict[conv_key]
-        if old.shape[1] < own.shape[1]:
-            pad = torch.zeros(old.shape[0], own.shape[1] - old.shape[1],
-                              *old.shape[2:])
-            state_dict = dict(state_dict)
-            state_dict[conv_key] = torch.cat([old, pad], dim=1)
-            print(f"conv1 input channels padded {old.shape[1]} -> {own.shape[1]}")
-        self.load_state_dict(state_dict)
+    def _load_compat(self, state_dict, ckpt_meta=None):
+        """load_state_dict with zero-padding for NEW inputs, so old
+        checkpoints resume with behavior preserved (new dims see zero
+        weights, contribute 0*x = 0 at init):
+
+        stage 1 — conv1 input channels: encoder v1->v2 added grid channels
+        13/14, v3 adds 15-17; new channels are appended at the END of the
+        channel order and zero-padded in.
+        stage 2 — trunk.0.weight input columns: globals growth inserts new
+        dims BEFORE the trailing 2-dim agent one-hot (which is concatenated
+        downstream and stays last), so old columns are spliced around a
+        zero block rather than simply right-padded.
+        """
+        sd = dict(state_dict)
+        own = self.state_dict()
+        # BC checkpoints are saved from a bare BCPolicy (unprefixed keys,
+        # no value head); PPO checkpoints come from ActorCritic ("bc."
+        # prefix). Prefix BC keys to match; the value head stays at its
+        # random init (it doesn't exist in BC).
+        if "bc.conv.0.weight" not in sd:
+            if "conv.0.weight" not in sd:
+                raise KeyError("unrecognized checkpoint key layout")
+            sd = {"bc." + k: v for k, v in sd.items()}
+
+        # stage 1: conv1 input-channel pad
+        ck = "bc.conv.0.weight"
+        old_c, new_c = sd[ck].shape[1], own[ck].shape[1]
+        if old_c < new_c:
+            pad = torch.zeros(sd[ck].shape[0], new_c - old_c,
+                              *sd[ck].shape[2:])
+            sd[ck] = torch.cat([sd[ck], pad], dim=1)
+            print(f"conv1 input channels padded {old_c} -> {new_c}")
+
+        # stage 2: trunk input-column splice for globals growth
+        tk = "bc.trunk.0.weight"
+        W_old, W_new = sd[tk], own[tk]
+        if W_old.shape[1] != W_new.shape[1]:
+            if ckpt_meta and ckpt_meta.get("grid_shape"):
+                _, gh, gw = ckpt_meta["grid_shape"]
+                gh2 = (gh + 1) // 2; gh2 = (gh2 + 1) // 2
+                gw2 = (gw + 1) // 2; gw2 = (gw2 + 1) // 2
+                flat_old = 32 * gh2 * gw2  # match BCPolicy's ceil-half math
+            else:
+                flat_old = W_old.shape[1] - (ckpt_meta or {}).get("g_dim", 38)
+            g_old = W_old.shape[1] - flat_old
+            assert 0 < flat_old < W_new.shape[1], \
+                "grid H/W change is unsupported (would scramble conv semantics)"
+            g_new = W_new.shape[1] - flat_old  # grid H/W unchanged
+            assert g_new >= g_old >= 2
+            S = g_old - 2  # shared globals; agent one-hot is the last 2
+            W = torch.zeros_like(W_new)
+            W[:, :flat_old] = W_old[:, :flat_old]                    # conv cols
+            W[:, flat_old:flat_old + S] = W_old[:, flat_old:flat_old + S]
+            # cols [flat_old+S : flat_old+g_new-2] stay zero <- new obs dims
+            W[:, flat_old + g_new - 2:] = W_old[:, flat_old + S:]    # one-hot
+            sd[tk] = W
+            print(f"trunk input spliced {W_old.shape[1]} -> {W_new.shape[1]} "
+                  f"({g_new - g_old} new globals dims zeroed)")
+        has_value_head = any(k.startswith("value_head") for k in sd)
+        if not has_value_head:
+            print("no value head in checkpoint (BC init) — left at random init")
+        self.load_state_dict(sd, strict=has_value_head)
 
     def load_bc(self, path):
         ckpt = torch.load(path, map_location="cpu")
-        self._load_compat(ckpt["state_dict"])
+        self._load_compat(ckpt["state_dict"], ckpt)
         print(f"BC weights loaded from {path}")
 
 
@@ -249,7 +295,7 @@ def main():
     model = ActorCritic(grid_shape, g_dim).to(dev)
     if args.resume and os.path.exists(args.resume):
         ckpt = torch.load(args.resume, map_location="cpu")
-        model._load_compat(ckpt["state_dict"])
+        model._load_compat(ckpt["state_dict"], ckpt)
         print(f"resumed PPO weights from {args.resume}")
     elif os.path.exists(args.bc):
         model.load_bc(args.bc)
