@@ -48,7 +48,10 @@ EARLY_DONE_SECONDS = 20.0
 # (plated/plate_add/plate_complete only fire from policy actions there).
 # Decay 0.5 -> 0.25 -> 0 gated on the assembly event rate of non-preloaded
 # episodes; roll back a notch if serves/episode drop >50%.
-PRELOAD_P = 0.5
+# run75 tail: serve-in-preloaded decayed 51%->23% (assembly gradient was
+# out-competing the serve press), overall serves/ep halved — rolled back
+# 0.5 -> 0.75 per the roadmap's starvation-protection clause.
+PRELOAD_P = 0.75
 
 
 class OC2Env:
